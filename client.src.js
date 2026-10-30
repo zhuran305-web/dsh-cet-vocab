@@ -79,7 +79,12 @@ function speak(word) {
 
 function cssVar(name) {
   try {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+    if (v) return v
+    // Token fallback: some themes set aliases on <body> (or only inside a scope).
+    try {
+      return getComputedStyle(document.body || document.documentElement).getPropertyValue(name).trim()
+    } catch (e) { return '' }
   } catch (e) { return '' }
 }
 
@@ -218,6 +223,9 @@ function applyAccentProbe() {
     cssVar('--dsw-alias-label-secondary'),
     cssVar('--dsw-alias-border-l1'),
     cssVar('--dsw-alias-border-l2'),
+    cssVar('--dsw-alias-state-success-primary'),
+    cssVar('--dsw-alias-state-warn-primary'),
+    cssVar('--dsw-alias-state-error-primary'),
   ]
   const memo = appearance + '|' + inputs.join('|')
   if (memo === probeMemo && probeStyleEl && probeStyleEl.textContent) return
@@ -322,6 +330,12 @@ function teardownAccentProbe() {
   try { if (probeStyleEl) probeStyleEl.remove() } catch (e) {}
   probeStyleEl = null
   probeMemo = null
+  // Leftover --cv-* on the root would keep tinting the host page and the
+  // next mount, so clear the whole derived set by name.
+  for (const name of PROBE_VARS) {
+    try { document.documentElement.style.removeProperty(name) } catch (e) {}
+    try { if (document.body) document.body.style.removeProperty(name) } catch (e) {}
+  }
 }
 
 // ------------------------------------------------- look-alike word matching

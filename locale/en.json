@@ -46,5 +46,8 @@
   "boxCard": "Memory stage",
   "emptyQueueHint": "Reviews and new words are done for today",
   "changeBookHint": "Switch word book in Settings",
-  "graduated": "Graduated"
+  "graduated": "Graduated",
+  "settingsAppearance": "Appearance",
+  "appearanceAuto": "Follow theme",
+  "appearanceDark": "Dark"
 }

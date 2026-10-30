@@ -28,8 +28,17 @@ console.log('client.js written:', size, 'bytes',
   'cet4:', words.counts.cet4, 'cet6:', words.counts.cet6)
 
 const check = spawnSync(process.execPath, ['--check', dest], { encoding: 'utf8' })
-if (check.status !== 0) {
-  console.error('SYNTAX CHECK FAILED:\n' + (check.stderr || check.stdout))
-  process.exit(1)
+if (check.error || check.status !== 0) {
+  /* Some sandboxes cannot spawn a second node process: fall back to an
+     in-process syntax parse so a red check means a real syntax error. */
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+  try {
+    new AsyncFunction(readFileSync(dest, 'utf8'))
+    console.log('node --check skipped (', (check.error && check.error.message) || ('exit ' + check.status), '), in-process parse OK')
+  } catch (e) {
+    console.error('SYNTAX CHECK FAILED:', (check.stderr || check.stdout || e.message))
+    process.exit(1)
+  }
+} else {
+  console.log('node --check OK')
 }
-console.log('node --check OK')

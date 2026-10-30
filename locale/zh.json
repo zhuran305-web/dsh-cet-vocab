@@ -46,5 +46,8 @@
   "boxCard": "记忆阶段",
   "emptyQueueHint": "复习和新词都已完成，可以关掉窗口啦",
   "changeBookHint": "可在「设置」里切换四六级词库",
-  "graduated": "已毕业"
+  "graduated": "已毕业",
+  "settingsAppearance": "外观",
+  "appearanceAuto": "跟随主题",
+  "appearanceDark": "深色"
 }
