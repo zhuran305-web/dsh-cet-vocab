@@ -62,27 +62,61 @@ function fmtT(str, params) {
 // no network. Chromium fills getVoices() asynchronously (often empty on the
 // first call), so we keep a module cache and let the settings view re-read it
 // on "voiceschanged".
+//
+// Note: we deliberately do NOT filter to English-only. On a Chinese Windows
+// install the only SAPI voice is often "Microsoft Huihui" (zh-CN), and hiding
+// it left the picker with nothing but "Auto". We list every voice and sort
+// English first so the good ones are on top.
 
 let VOICE_LIST = []
+let VOICE_RAW_COUNT = 0
+let VOICE_WARMED = false
 
-/** Re-read the browser's English voices into VOICE_LIST; returns the list. */
+function voiceRank(v) {
+  const l = String((v && v.lang) || '')
+  if (/^en[-_]us/i.test(l)) return 0
+  if (/^en[-_]gb/i.test(l)) return 1
+  if (/^en([-_]|$)/i.test(l)) return 2
+  return 3
+}
+
+/** Re-read every voice the browser exposes into VOICE_LIST; returns the list. */
 function refreshVoices() {
   try {
     const synth = window.speechSynthesis
     if (!synth || !synth.getVoices) return VOICE_LIST
-    const en = (synth.getVoices() || []).filter((v) => /^en([-_]|$)/i.test(v.lang || ''))
-    en.sort((a, b) => {
-      const ua = /^en[-_]us/i.test(a.lang || '') ? 0 : 1
-      const ub = /^en[-_]us/i.test(b.lang || '') ? 0 : 1
-      if (ua !== ub) return ua - ub
-      const la = /^en[-_]gb/i.test(a.lang || '') ? 0 : 1
-      const lb = /^en[-_]gb/i.test(b.lang || '') ? 0 : 1
-      if (la !== lb) return la - lb
+    const all = (synth.getVoices() || []).slice()
+    VOICE_RAW_COUNT = all.length
+    all.sort((a, b) => {
+      const ra = voiceRank(a)
+      const rb = voiceRank(b)
+      if (ra !== rb) return ra - rb
       return String(a.name || '').localeCompare(String(b.name || ''))
     })
-    VOICE_LIST = en
+    VOICE_LIST = all
   } catch (e) { /* speech is best-effort */ }
   return VOICE_LIST
+}
+
+/**
+ * Chromium/Electron keeps getVoices() empty until the TTS engine is actually
+ * initialised, and on desktop that sometimes only happens after the first
+ * utterance. Speak one silent word once to force it, then the normal
+ * voiceschanged path takes over. Guarded so it runs at most once per page.
+ */
+function warmUpVoices() {
+  if (VOICE_WARMED) return
+  VOICE_WARMED = true
+  try {
+    const synth = window.speechSynthesis
+    if (!synth) return
+    if ((synth.getVoices() || []).length > 0) return
+    const u = new SpeechSynthesisUtterance('a')
+    u.volume = 0
+    u.rate = 2
+    synth.speak(u)
+    window.setTimeout(() => { try { synth.cancel() } catch (e) {} }, 60)
+  } catch (e) { /* speech is best-effort */ }
 }
 
 /** Resolve a saved voiceURI (or name) against the cached English voices. */
@@ -681,8 +715,8 @@ function bookStats(state) {
 
 // ------------------------------------------------------------------- locale
 
-const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音音色","voiceAuto":"自动选择","voiceTest":"试听","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","settingsCustom":"自定义","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色"}
-const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","settingsSpeak":"Speak on reveal","settingsVoice":"Voice","voiceAuto":"Auto","voiceTest":"Preview","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","settingsCustom":"Custom","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark"}
+const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音音色","voiceAuto":"自动选择","voiceTest":"试听","voiceMissing":"（已卸载）","voiceNone":"系统里没有读到可用的语音包，下拉只有「自动选择」。可在 Windows 设置 → 时间和语言 → 语音 里添加英语语音包，然后点下面重试。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","settingsCustom":"自定义","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色"}
+const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","settingsSpeak":"Speak on reveal","settingsVoice":"Voice","voiceAuto":"Auto","voiceTest":"Preview","voiceMissing":"(not installed)","voiceNone":"No speech voice could be read, so only Auto is listed. Add an English voice pack in Windows Settings → Time & language → Speech, then use Retry below.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","settingsCustom":"Custom","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark"}
 
 let localeBinder = null
 const t = (key) => {
@@ -909,6 +943,14 @@ const CSS = `
   color: var(--cv-text, var(--dsw-alias-label-primary));
 }
 .cv-voice-test:hover { border-color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); }
+.cv-voice-empty { text-align: left; margin-top: 2px; padding: 0 0 8px 102px; line-height: 1.5; }
+.cv-voice-retry {
+  margin-top: 6px; padding: 3px 10px; font-size: 11.5px; cursor: pointer; border-radius: 7px;
+  border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
+  background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1));
+  color: var(--cv-text, var(--dsw-alias-label-primary));
+}
+.cv-voice-retry:hover { border-color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); }
 .cv-pill:hover { filter: brightness(1.08); }
 .cv-pill-badge {
   min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px;
@@ -1289,13 +1331,27 @@ function SettingsView({ state }) {
   // mount so the picker is never permanently empty.
   React.useEffect(() => {
     const synth = window.speechSynthesis
-    const sync = () => setVoices(refreshVoices().slice())
+    let alive = true
+    const sync = () => { if (alive) setVoices(refreshVoices().slice()) }
     sync()
     if (synth && synth.addEventListener) synth.addEventListener('voiceschanged', sync)
-    const id = window.setTimeout(sync, 800)
+    // Electron often reports zero voices until the engine initialises; nudge it
+    // and poll briefly rather than relying on a single 'voiceschanged' we may
+    // have missed before the listener was attached.
+    if (VOICE_RAW_COUNT === 0) {
+      warmUpVoices()
+      const t1 = window.setTimeout(sync, 250)
+      const t2 = window.setTimeout(sync, 900)
+      const t3 = window.setTimeout(sync, 2000)
+      return () => {
+        alive = false
+        if (synth && synth.removeEventListener) synth.removeEventListener('voiceschanged', sync)
+        window.clearTimeout(t1); window.clearTimeout(t2); window.clearTimeout(t3)
+      }
+    }
     return () => {
+      alive = false
       if (synth && synth.removeEventListener) synth.removeEventListener('voiceschanged', sync)
-      window.clearTimeout(id)
     }
   }, [])
   const seg = (value, options, onPick) => h('div', { className: 'cv-seg' },
@@ -1303,9 +1359,15 @@ function SettingsView({ state }) {
       key: o.v, className: value === o.v ? 'cv-on' : '', onClick: () => onPick(o.v),
     }, o.label)))
   const curVoice = state.settings.voice || ''
+  // Always keep the saved value selectable, even if the browser no longer
+  // reports that voice (voice packs get uninstalled) — otherwise the <select>
+  // would silently snap to "Auto" and the user's choice would look lost.
   const voiceOptions = [{ v: '', label: t('voiceAuto') }].concat(
     voices.map((v) => ({ v: v.voiceURI || v.name, label: v.name + (v.lang ? ' · ' + v.lang : '') })),
   )
+  if (curVoice && !voiceOptions.some((o) => o.v === curVoice)) {
+    voiceOptions.push({ v: curVoice, label: curVoice + ' · ' + t('voiceMissing') })
+  }
   return h('div', null,
     h('div', { className: 'cv-set-row' },
       h('span', { className: 'cv-set-label' }, t('settingsBook')),
@@ -1365,6 +1427,13 @@ function SettingsView({ state }) {
           onClick: () => speak('vocabulary', curVoice),
         }, '🔊'),
       ),
+    ),
+    voices.length === 0 && h('div', { className: 'cv-hint cv-voice-empty' },
+      h('div', null, t('voiceNone')),
+      h('button', {
+        className: 'cv-voice-retry',
+        onClick: () => { VOICE_WARMED = false; refreshVoices(); setVoices(refreshVoices().slice()); warmUpVoices() },
+      }, '↻ ' + t('voiceRetry')),
     ),
     h('div', { className: 'cv-set-row' },
       h('span', { className: 'cv-set-label' }, t('settingsAutoOpen')),
