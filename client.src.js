@@ -57,27 +57,29 @@ function fmtT(str, params) {
 
 // ------------------------------------------------------- speech (Web TTS)
 //
-// Everything here rides on the host browser's speechSynthesis: no audio files,
-// no network. Chromium fills getVoices() asynchronously (often empty on the
-// first call), so we keep a module cache and let the settings view re-read it
-// on "voiceschanged".
+// Pronunciation rides TWO engines, tried in order:
 //
-// Note: we deliberately do NOT filter to English-only. On a Chinese Windows
-// install the only SAPI voice is often "Microsoft Huihui" (zh-CN), and hiding
-// it left the picker with nothing but "Auto". We list every voice and sort
-// English first so the good ones are on top.
+//   1. Online dictionary audio (Youdao dictvoice): real human US/UK
+//      recordings, one small mp3 per word. This needs no Windows voice pack
+//      and no admin rights, so it works on a Chinese-only machine where the
+//      OS would otherwise pronounce English with a Chinese voice. Played via
+//      an <audio> element — media playback is not subject to CORS, and the
+//      DSH web UI ships no CSP, so cross-origin playback is allowed.
+//   2. The browser's speechSynthesis as an offline fallback, preferring an
+//      installed English voice (en-US / en-GB) over anything else.
+//
+// The user picks an accent (自动/美式/英式); "auto" behaves as US.
+
+const ACCENT_TYPE = { us: 2, uk: 1 } // youdao dictvoice type codes
+let AUDIO_CURRENT = null
+const AUDIO_PREFETCH = new Map() // key -> HTMLAudioElement
+const AUDIO_KEEP = 60 // cap the prefetch map so it cannot grow without bound
+
+// ---- browser voice list (used by the offline fallback and the detection row)
 
 let VOICE_LIST = []
 let VOICE_RAW_COUNT = 0
 let VOICE_WARMED = false
-
-function voiceRank(v) {
-  const l = String((v && v.lang) || '')
-  if (/^en[-_]us/i.test(l)) return 0
-  if (/^en[-_]gb/i.test(l)) return 1
-  if (/^en([-_]|$)/i.test(l)) return 2
-  return 3
-}
 
 /** Re-read every voice the browser exposes into VOICE_LIST; returns the list. */
 function refreshVoices() {
@@ -86,12 +88,6 @@ function refreshVoices() {
     if (!synth || !synth.getVoices) return VOICE_LIST
     const all = (synth.getVoices() || []).slice()
     VOICE_RAW_COUNT = all.length
-    all.sort((a, b) => {
-      const ra = voiceRank(a)
-      const rb = voiceRank(b)
-      if (ra !== rb) return ra - rb
-      return String(a.name || '').localeCompare(String(b.name || ''))
-    })
     VOICE_LIST = all
   } catch (e) { /* speech is best-effort */ }
   return VOICE_LIST
@@ -99,9 +95,7 @@ function refreshVoices() {
 
 /**
  * Chromium/Electron keeps getVoices() empty until the TTS engine is actually
- * initialised, and on desktop that sometimes only happens after the first
- * utterance. Speak one silent word once to force it, then the normal
- * voiceschanged path takes over. Guarded so it runs at most once per page.
+ * initialised; speak one silent word once to force it. Runs at most once.
  */
 function warmUpVoices() {
   if (VOICE_WARMED) return
@@ -118,37 +112,110 @@ function warmUpVoices() {
   } catch (e) { /* speech is best-effort */ }
 }
 
-/** Resolve a saved voiceURI (or name) against the cached English voices. */
-function pickVoice(uri) {
-  if (!uri) return null
+function resolveAccent(a) { return a === 'uk' ? 'uk' : 'us' }
+
+function savedAccent() {
+  try { return resolveAccent(store.state.settings.accent) } catch (e) { return 'us' }
+}
+
+function audioKey(word, accent) { return accent + ':' + String(word).toLowerCase() }
+
+function audioUrl(word, accent) {
+  const tp = ACCENT_TYPE[accent]
+  if (!tp) return null
+  return 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(word) + '&type=' + tp
+}
+
+/** How many English voices the browser currently exposes (0 on zh-only machines). */
+function enVoiceCount() {
   const list = VOICE_LIST.length > 0 ? VOICE_LIST : refreshVoices()
-  for (const v of list) if (v.voiceURI === uri || v.name === uri) return v
-  return null
+  return list.filter((v) => /^en([-_]|$)/i.test(String((v && v.lang) || ''))).length
+}
+
+/** Start loading one word's audio early so 🔊/auto-speak is instant. */
+function prefetchAudio(word, accent) {
+  const a = resolveAccent(accent || savedAccent())
+  const url = audioUrl(word, a)
+  if (!url) return
+  const key = audioKey(word, a)
+  if (AUDIO_PREFETCH.has(key)) return
+  try {
+    const el = new Audio()
+    el.preload = 'auto'
+    el.src = url
+    AUDIO_PREFETCH.set(key, el)
+    if (AUDIO_PREFETCH.size > AUDIO_KEEP) {
+      const first = AUDIO_PREFETCH.keys().next().value
+      const old = AUDIO_PREFETCH.get(first)
+      if (old && old !== AUDIO_CURRENT) { try { old.pause(); old.removeAttribute('src') } catch (e) {} }
+      AUDIO_PREFETCH.delete(first)
+    }
+  } catch (e) { /* audio is best-effort */ }
+}
+
+function stopAudio() {
+  if (AUDIO_CURRENT) {
+    try { AUDIO_CURRENT.pause() } catch (e) {}
+    AUDIO_CURRENT = null
+  }
 }
 
 /**
- * Speak one English word. `forceUri` overrides the saved preference so the
- * settings page can preview a voice before committing to it.
+ * Offline fallback: the browser TTS. Prefers a real English voice matching
+ * the accent; with none installed it still speaks (the OS default voice will
+ * pronounce the word as best it can — this path only runs when offline).
  */
-function speak(word, forceUri) {
+function speakTTS(word, accent) {
   try {
     const synth = window.speechSynthesis
     if (!synth) return
+    const list = VOICE_LIST.length > 0 ? VOICE_LIST : refreshVoices()
+    const want = accent === 'uk' ? /^en[-_]gb/i : /^en[-_]us/i
+    const v = list.find((x) => want.test(String(x.lang || ''))) ||
+      list.find((x) => /^en([-_]|$)/i.test(String(x.lang || ''))) || null
     const u = new SpeechSynthesisUtterance(word)
-    u.lang = 'en-US'
     u.rate = 0.92
-    let uri = forceUri
-    if (uri == null) {
-      try { uri = store.state.settings.voice || '' } catch (e) { uri = '' }
-    }
-    const v = pickVoice(uri)
-    if (v) {
-      u.voice = v
-      u.lang = v.lang || u.lang
-    }
+    if (v) { u.voice = v; u.lang = v.lang || u.lang }
+    else u.lang = accent === 'uk' ? 'en-GB' : 'en-US'
     synth.cancel()
     synth.speak(u)
   } catch (e) { /* speech is best-effort */ }
+}
+
+/**
+ * Speak one English word: online human audio first, browser TTS as fallback.
+ * `accentOverride` lets the settings page preview an accent before saving.
+ */
+function speak(word, accentOverride) {
+  const accent = resolveAccent(accentOverride || savedAccent())
+  try { if (window.speechSynthesis) window.speechSynthesis.cancel() } catch (e) {}
+  stopAudio()
+  const url = audioUrl(word, accent)
+  if (!url) { speakTTS(word, accent); return }
+  const key = audioKey(word, accent)
+  let el = AUDIO_PREFETCH.get(key)
+  if (!el) {
+    try { el = new Audio() } catch (e) { speakTTS(word, accent); return }
+    el.preload = 'auto'
+    el.src = url
+    AUDIO_PREFETCH.set(key, el)
+  }
+  try { el.currentTime = 0 } catch (e) {}
+  AUDIO_CURRENT = el
+  let settled = false
+  let watch = 0
+  const done = () => { if (!settled) { settled = true; window.clearTimeout(watch) } }
+  const fallbackOnce = () => {
+    if (settled) return
+    done()
+    if (AUDIO_CURRENT === el) AUDIO_CURRENT = null
+    try { el.pause() } catch (e) {}
+    speakTTS(word, accent) // offline / blocked: fall back to browser TTS
+  }
+  watch = window.setTimeout(fallbackOnce, 4500) // play() may hang on slow networks
+  el.addEventListener('playing', done, { once: true })
+  el.addEventListener('error', fallbackOnce, { once: true })
+  el.play().catch(fallbackOnce)
 }
 
 // ------------------------------------------------- adaptive accent colors
@@ -523,7 +590,7 @@ function confusionScore(w, c) {
 function defaultState() {
   return {
     v: 1,
-    settings: { book: 'cet4', dailyNew: 10, autoSpeak: false, speakOnOpen: false, mode: 'card', autoOpen: true, appearance: 'auto', voice: '' },
+    settings: { book: 'cet4', dailyNew: 10, autoSpeak: false, speakOnOpen: false, mode: 'card', autoOpen: true, appearance: 'auto', accent: 'auto', voice: '' },
     words: {}, // word -> { box, due, seen, ok, fz, no }
     today: { date: todayStr(), newDone: 0, reviewDone: 0 },
     streak: 0,
@@ -547,6 +614,13 @@ function migrate(raw) {
     practice: (raw.practice && Array.isArray(raw.practice.words)) ? raw.practice : null,
   }
   if (s.today.date !== todayStr()) s.today = { date: todayStr(), newDone: 0, reviewDone: 0 }
+  // 0.2.0: the old per-voice picker became a coarse accent choice. Map any
+  // saved voiceURI onto an accent so nobody's setting silently disappears.
+  // (base.settings already carries accent:'auto', so test the RAW state.)
+  if (!raw.settings || raw.settings.accent == null) {
+    const old = String((raw.settings && raw.settings.voice) || '')
+    s.settings.accent = old ? (/en[-_]gb/i.test(old) ? 'uk' : 'us') : 'auto'
+  }
   return s
 }
 
@@ -714,8 +788,8 @@ function bookStats(state) {
 
 // ------------------------------------------------------------------- locale
 
-const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音音色","voiceAuto":"自动选择","voiceTest":"试听","voiceMissing":"（已卸载）","voiceNone":"系统里没有读到可用的语音包，下拉只有「自动选择」。可在 Windows 设置 → 时间和语言 → 语音 里添加英语语音包，然后点下面重试。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","settingsCustom":"自定义","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色"}
-const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","settingsSpeak":"Speak on reveal","settingsVoice":"Voice","voiceAuto":"Auto","voiceTest":"Preview","voiceMissing":"(not installed)","voiceNone":"No speech voice could be read, so only Auto is listed. Add an English voice pack in Windows Settings → Time & language → Speech, then use Retry below.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","settingsCustom":"Custom","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark"}
+const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","settingsCustom":"自定义","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色"}
+const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","settingsCustom":"Custom","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark"}
 
 let localeBinder = null
 const t = (key) => {
@@ -1061,6 +1135,8 @@ function PracticeBar({ practice }) {
 }
 
 function CardView({ card, isNew, showing, onReveal, onGrade }) {
+  // Warm the pronunciation mp3 while the learner reads the word.
+  React.useEffect(() => { prefetchAudio(card.w) }, [card && card.w])
   return h('div', null,
     h('div', { className: 'cv-card' },
       h('div', { className: 'cv-meta' },
@@ -1357,16 +1433,6 @@ function SettingsView({ state }) {
     options.map((o) => h('button', {
       key: o.v, className: value === o.v ? 'cv-on' : '', onClick: () => onPick(o.v),
     }, o.label)))
-  const curVoice = state.settings.voice || ''
-  // Always keep the saved value selectable, even if the browser no longer
-  // reports that voice (voice packs get uninstalled) — otherwise the <select>
-  // would silently snap to "Auto" and the user's choice would look lost.
-  const voiceOptions = [{ v: '', label: t('voiceAuto') }].concat(
-    voices.map((v) => ({ v: v.voiceURI || v.name, label: v.name + (v.lang ? ' · ' + v.lang : '') })),
-  )
-  if (curVoice && !voiceOptions.some((o) => o.v === curVoice)) {
-    voiceOptions.push({ v: curVoice, label: curVoice + ' · ' + t('voiceMissing') })
-  }
   return h('div', null,
     h('div', { className: 'cv-set-row' },
       h('span', { className: 'cv-set-label' }, t('settingsBook')),
@@ -1411,25 +1477,23 @@ function SettingsView({ state }) {
     h('div', { className: 'cv-set-row' },
       h('span', { className: 'cv-set-label' }, t('settingsVoice')),
       h('div', { className: 'cv-voice' },
-        h('select', {
-          className: 'cv-select',
-          value: curVoice,
-          onChange: (e) => {
-            const v = e.target.value
-            store.setSettings({ voice: v })
-            speak('vocabulary', v) // preview the freshly picked voice
-          },
-        }, voiceOptions.map((o) => h('option', { key: o.v, value: o.v }, o.label))),
+        seg(state.settings.accent || 'auto', [
+          { v: 'auto', label: t('accentAuto') },
+          { v: 'us', label: t('accentUS') },
+          { v: 'uk', label: t('accentUK') },
+        ], (v) => { store.setSettings({ accent: v }); speak('vocabulary', v) }),
         h('button', {
           className: 'cv-voice-test',
           title: t('voiceTest'),
-          onClick: () => speak('vocabulary', curVoice),
+          onClick: () => speak('vocabulary', state.settings.accent || 'auto'),
         }, '🔊'),
       ),
     ),
-    voices.length === 0 && h('div', { className: 'cv-hint cv-voice-empty' },
-      h('div', null, t('voiceNone')),
-      h('button', {
+    h('div', { className: 'cv-hint cv-voice-empty' },
+      h('div', null, enVoiceCount() > 0
+        ? t('voiceSysOk').replace('{n}', String(enVoiceCount()))
+        : t('voiceSysNone')),
+      enVoiceCount() === 0 && h('button', {
         className: 'cv-voice-retry',
         onClick: () => { VOICE_WARMED = false; refreshVoices(); setVoices(refreshVoices().slice()); warmUpVoices() },
       }, '↻ ' + t('voiceRetry')),

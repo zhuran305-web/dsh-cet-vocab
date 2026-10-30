@@ -12,7 +12,7 @@ A CET-4 / CET-6 vocabulary trainer for the [DeepSeek Harness](https://github.com
 - **Daily plan / 每日计划** — configurable daily new-word quota (0–500); today's review count shown on the pill badge. 每日新词数可自定义（0–500），药丸徽标显示今日待复习数。
 - **Review / extra practice / 复习与加练** — when today's quota is done, review due cards (≤20) or practice 10 unseen words; practice results don't consume the quota. 完成当日额度后可复习到期词或加练未学词，不计额度。
 - **Auto-open / 思考时自动弹出** — opens the window automatically whenever a session starts running; toggleable in settings. 检测到会话运行时自动弹出窗口，可在设置中关闭。
-- **Pronunciation / 发音** — reads the word via `speechSynthesis`; auto-speak optional. 调用浏览器语音合成读单词，可开自动发音。
+- **Pronunciation / 发音** — real human US/UK recordings fetched per word from Youdao's open dictionary audio (accent selectable: auto / US / UK), with the browser's `speechSynthesis` as the offline fallback — no Windows voice pack or admin rights needed. 每个词实时取有道词典的真人美式/英式发音（口音可选：自动/美式/英式），断网时自动回落到系统语音合成——不需要安装任何 Windows 语音包，也不需要管理员权限。
 - **Window / 窗口** — draggable with pointer capture and edge clamping, minimizes to a badge pill that stays where you left it; geometry persisted. 拖动带边界钳制，最小化成药丸且停在原地，几何持久化。
 - **Stats & settings / 统计与设置** — per-book progress and streaks; switch between CET-4 / CET-6 / all books. 各词书进度统计，可切换四级/六级/全部词库。
 - **Keyboard / 快捷键** — `Space` reveal, `1/2/3` grade in card mode, `1-4` answer in quiz mode. 卡片模式空格翻面、123 评分，选择题 1-4 作答。
@@ -27,7 +27,7 @@ From any DSH plugin marketplace that mirrors the [awesome-dsh-plugin](https://gi
 dsh plugin add dsh-cet-vocab
 ```
 
-The package ships prebuilt `client.js` — no build step, no network access, no telemetry. 包内自带构建好的 client.js，无构建步骤、无网络请求、无遥测。
+The package ships prebuilt `client.js` — no build step, no telemetry. Pronunciation streams one small mp3 per word from Youdao's dictionary audio on demand (cached by the browser); everything else works offline. 包内自带构建好的 client.js，无构建步骤、无遥测。发音按需流式加载有道词典音频（浏览器自带缓存），其余功能完全离线。
 
 ## Build from source / 从源码构建
 
