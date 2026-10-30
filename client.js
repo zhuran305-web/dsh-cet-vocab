@@ -154,18 +154,108 @@ function findMixTo(base, toward, against, min) {
   return mixRgb(base, toward, hi)
 }
 
-let accentProbeMemo = null
+/**
+ * Push a surface and its text apart until they clear `min`. Direction
+ * follows the text: white-ish text means the theme expects a dark surface,
+ * so the surface goes toward black (and the text only toward white); dark
+ * text lightens the surface instead. This keeps each theme's mood — a gray
+ * window with white text becomes a darker gray window, not a surprise light
+ * one — while guaranteeing body text stays readable.
+ */
+function solvePair(surface, text, min) {
+  if (contrastRatio(surface, text) >= min) return [surface, text]
+  const textIsLight = relLum(text) > 0.4
+  const surfToward = textIsLight ? BLACK_RGB : WHITE_RGB
+  const textToward = textIsLight ? WHITE_RGB : BLACK_RGB
+  let lo = 0, hi = 1
+  const ok = (t) => contrastRatio(mixRgb(surface, surfToward, t), mixRgb(text, textToward, t)) >= min
+  if (!ok(1)) return [mixRgb(surface, surfToward, 1), mixRgb(text, textToward, 1)]
+  while (hi - lo > 0.02) {
+    const mid = (lo + hi) / 2
+    if (ok(mid)) hi = mid
+    else lo = mid
+  }
+  return [
+    mixRgb(surface, surfToward, hi),
+    mixRgb(text, textToward, hi),
+  ]
+}
+
+/** Lift `layer` away from `surface` until they differ by at least `min`. */
+function ensureSeparation(layer, surface, min, toward) {
+  if (contrastRatio(layer, surface) >= min) return layer
+  return findMixTo(layer, toward, surface, min)
+}
+
+function rgbaStr(rgb, a) {
+  return 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + a + ')'
+}
+
+const PROBE_VARS = [
+  '--cv-surface', '--cv-text', '--cv-text-secondary',
+  '--cv-layer-1', '--cv-layer-2', '--cv-border-1', '--cv-border-2',
+  '--cv-accent', '--cv-accent-fg', '--cv-accent-text',
+]
+
+let probeStyleEl = null
+function probeStyleSheet() {
+  if (probeStyleEl && probeStyleEl.isConnected) return probeStyleEl
+  probeStyleEl = document.createElement('style')
+  probeStyleEl.setAttribute('data-dsh-cet-vocab', '')
+  probeStyleEl.setAttribute('data-plugin', PLUGIN_ID)
+  document.head.appendChild(probeStyleEl)
+  return probeStyleEl
+}
+
+let probeMemo = null
 function applyAccentProbe() {
+  const inputs = [
+    cssVar('--dsw-alias-brand-primary'),
+    cssVar('--dsw-alias-bg-overlay'),
+    cssVar('--dsw-alias-bg-layer-1'),
+    cssVar('--dsw-alias-bg-layer-2'),
+    cssVar('--dsw-alias-label-primary'),
+    cssVar('--dsw-alias-label-secondary'),
+    cssVar('--dsw-alias-border-l1'),
+    cssVar('--dsw-alias-border-l2'),
+  ]
+  const memo = inputs.join('|')
+  if (memo === probeMemo && probeStyleEl && probeStyleEl.textContent) return
+  probeMemo = memo
   try {
-    const root = document.documentElement
-    const brandRaw = cssVar('--dsw-alias-brand-primary')
-    const overlayRaw = cssVar('--dsw-alias-bg-overlay')
-    const memo = brandRaw + '|' + overlayRaw
-    if (memo === accentProbeMemo && root.style.getPropertyValue('--cv-accent')) return
-    accentProbeMemo = memo
-    let brand = parseColor(brandRaw)
-    const overlay = parseColor(cssVar('--dsw-alias-bg-overlay')) || [245, 246, 248]
+    let brand = parseColor(inputs[0])
+    const overlay = parseColor(inputs[1]) || [245, 246, 248]
+    const layer1 = parseColor(inputs[2]) || mixRgb(overlay, BLACK_RGB, 0.05)
+    const layer2 = parseColor(inputs[3]) || mixRgb(overlay, BLACK_RGB, 0.1)
+    let text = parseColor(inputs[4]) || [24, 26, 30]
+    let text2 = parseColor(inputs[5]) || mixRgb(text, overlay, 0.35)
+    let surface = overlay
     if (!brand) brand = [61, 126, 255] // same blue as the plugin icon
+
+    // ---- window surface & text: guarantee readable body text
+    let pair = solvePair(surface, text, 4.5)
+    surface = pair[0]; text = pair[1]
+    // secondary text: >=3 on the (possibly adjusted) surface
+    text2 = contrastRatio(text2, surface) >= 3 ? text2 : findMixTo(text2, text, surface, 3.2)
+
+    // ---- cards & controls: keep them lifted off the surface, text still readable
+    // ensureSeparation guarantees the layer is visible against the window;
+    // the second check guarantees --cv-text stays readable ON the layer — a
+    // theme whose card color sits mid-way can otherwise swallow white text.
+    function pickLayer(layer, surface, text, minSep) {
+      let l = ensureSeparation(layer, surface, minSep, text)
+      if (contrastRatio(l, text) < 4.5) {
+        l = findMixTo(l, relLum(text) > 0.4 ? BLACK_RGB : WHITE_RGB, text, 4.5)
+        if (contrastRatio(l, surface) < 1.15) l = mixRgb(surface, relLum(text) > 0.4 ? BLACK_RGB : WHITE_RGB, 0.18)
+      }
+      return l
+    }
+    const l1 = pickLayer(layer1, surface, text, 1.25)
+    const l2 = pickLayer(layer2, surface, text, 1.5)
+    const border1 = mixRgb(text, surface, 0.78)
+    const border2 = mixRgb(text, surface, 0.55)
+
+    // ---- accent (solid buttons & pill): readable label on the brand color
     let accent, fg
     // Button labels are semibold, so white-on-accent at >=3 (AA large/bold)
     // is kept — that preserves the familiar blue-pill-with-white-text look
@@ -182,26 +272,47 @@ function applyAccentProbe() {
         accent = lightened; fg = rgbHex(DARK_FG)
       }
     }
-    let text = brand
-    if (contrastRatio(brand, overlay) < 3) {
-      text = relLum(overlay) > 0.5
-        ? findMixTo(brand, BLACK_RGB, overlay, 4.5)
-        : findMixTo(brand, WHITE_RGB, overlay, 4.5)
+    // accent used as text on the window body: >=4.5 on the surface
+    let accentText = brand
+    if (contrastRatio(brand, surface) < 4.5) {
+      accentText = relLum(surface) > 0.5
+        ? findMixTo(brand, BLACK_RGB, surface, 4.5)
+        : findMixTo(brand, WHITE_RGB, surface, 4.5)
     }
-    root.style.setProperty('--cv-accent', rgbHex(accent))
-    root.style.setProperty('--cv-accent-fg', fg)
-    root.style.setProperty('--cv-accent-text', rgbHex(text))
+
+    probeStyleSheet().textContent = '.cv-root{' +
+      '--cv-surface:' + rgbHex(surface) + ';' +
+      '--cv-text:' + rgbHex(text) + ';' +
+      '--cv-text-secondary:' + rgbHex(text2) + ';' +
+      '--cv-layer-1:' + rgbHex(l1) + ';' +
+      '--cv-layer-2:' + rgbHex(l2) + ';' +
+      '--cv-border-1:' + rgbaStr(border1, 0.55) + ';' +
+      '--cv-border-2:' + rgbaStr(border2, 0.7) + ';' +
+      '--cv-accent:' + rgbHex(accent) + ';' +
+      '--cv-accent-fg:' + fg + ';' +
+      '--cv-accent-text:' + rgbHex(accentText) + ';' +
+      '}'
   } catch (e) {
-    // Probe failed — keep the raw token as every derived variable so nothing
-    // worse than the old behavior can happen.
-    try {
-      const root = document.documentElement
-      const raw = cssVar('--dsw-alias-brand-primary') || '#3D7EFF'
-      root.style.setProperty('--cv-accent', raw)
-      root.style.setProperty('--cv-accent-fg', '#fff')
-      root.style.setProperty('--cv-accent-text', raw)
-    } catch (e2) { /* give up quietly */ }
+    // Probe failed — fall back to the raw tokens so nothing is worse than before.
+    probeStyleSheet().textContent = '.cv-root{' +
+      '--cv-surface:' + (inputs[1] || '#f5f6f8') + ';' +
+      '--cv-text:' + (inputs[4] || '#181a1e') + ';' +
+      '--cv-text-secondary:' + (inputs[5] || '#5a5f68') + ';' +
+      '--cv-layer-1:' + (inputs[2] || '#ffffff') + ';' +
+      '--cv-layer-2:' + (inputs[3] || '#eef0f3') + ';' +
+      '--cv-border-1:' + (inputs[6] || 'rgba(0,0,0,.1)') + ';' +
+      '--cv-border-2:' + (inputs[7] || 'rgba(0,0,0,.18)') + ';' +
+      '--cv-accent:' + (inputs[0] || '#3D7EFF') + ';' +
+      '--cv-accent-fg:#fff;' +
+      '--cv-accent-text:' + (inputs[0] || '#3D7EFF') + ';' +
+      '}'
   }
+}
+
+function teardownAccentProbe() {
+  try { if (probeStyleEl) probeStyleEl.remove() } catch (e) {}
+  probeStyleEl = null
+  probeMemo = null
 }
 
 // ------------------------------------------------- look-alike word matching
@@ -481,14 +592,15 @@ const t = (key) => {
 const CSS = `
 .cv-root, .cv-root * { box-sizing: border-box; }
 .cv-root {
-  font-size: 14px; line-height: 1.5; color: var(--dsw-alias-label-primary);
+  font-size: 14px; line-height: 1.5;
+  color: var(--cv-text, var(--dsw-alias-label-primary));
   font-family: inherit;
 }
 .cv-window {
   position: fixed; width: 384px; max-height: min(74vh, 660px);
   display: flex; flex-direction: column;
-  background: var(--dsw-alias-bg-overlay);
-  border: 1px solid var(--dsw-alias-border-l1); border-radius: 14px;
+  background: var(--cv-surface, var(--dsw-alias-bg-overlay));
+  border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); border-radius: 14px;
   box-shadow: 0 18px 48px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.12);
   user-select: none;
 }
@@ -496,58 +608,58 @@ const CSS = `
 .cv-head {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 10px 8px 14px; cursor: grab; touch-action: none;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  border-bottom: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
 }
 .cv-head:active { cursor: grabbing; }
 .cv-head-title { font-weight: 600; font-size: 14px; }
 .cv-head-due {
-  font-size: 11px; color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l1);
+  font-size: 11px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
+  background: var(--cv-layer-2, var(--dsw-alias-bg-layer-1)); border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
   border-radius: 999px; padding: 1px 8px;
 }
 .cv-head-spacer { flex: 1; }
 .cv-iconbtn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 26px; border-radius: 8px; border: none; cursor: pointer;
-  background: transparent; color: var(--dsw-alias-label-secondary);
+  background: transparent; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
 }
-.cv-iconbtn:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+.cv-iconbtn:hover { background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); color: var(--cv-text, var(--dsw-alias-label-primary)); }
 .cv-tabs { display: flex; gap: 4px; padding: 8px 12px 0; }
 .cv-tab {
   flex: 1; text-align: center; padding: 6px 0; font-size: 13px; cursor: pointer;
-  border: none; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-secondary);
+  border: none; border-radius: 8px; background: transparent; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
 }
-.cv-tab:hover { background: var(--dsw-alias-bg-layer-2); }
+.cv-tab:hover { background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); }
 .cv-tab--on {
-  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary);
-  font-weight: 600; border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); color: var(--cv-text, var(--dsw-alias-label-primary));
+  font-weight: 600; border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
 }
 .cv-body { padding: 12px 14px 14px; overflow-y: auto; }
-.cv-today { display: flex; align-items: baseline; gap: 10px; font-size: 12px; color: var(--dsw-alias-label-secondary); margin-bottom: 6px; }
-.cv-today b { color: var(--dsw-alias-label-primary); font-weight: 600; }
-.cv-bar { height: 4px; border-radius: 999px; background: var(--dsw-alias-bg-layer-2); overflow: hidden; margin-bottom: 12px; }
+.cv-today { display: flex; align-items: baseline; gap: 10px; font-size: 12px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); margin-bottom: 6px; }
+.cv-today b { color: var(--cv-text, var(--dsw-alias-label-primary)); font-weight: 600; }
+.cv-bar { height: 4px; border-radius: 999px; background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); overflow: hidden; margin-bottom: 12px; }
 .cv-bar > i { display: block; height: 100%; background: var(--cv-accent, var(--dsw-alias-brand-primary)); border-radius: 999px; transition: width .35s ease; }
 .cv-card {
-  background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
   border-radius: 12px; padding: 18px 16px 16px; text-align: center; user-select: text;
 }
 .cv-word { font-size: 28px; font-weight: 700; letter-spacing: .2px; word-break: break-word; }
-.cv-phon { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 4px; color: var(--dsw-alias-label-secondary); font-size: 13px; min-height: 20px; }
+.cv-phon { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 4px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); font-size: 13px; min-height: 20px; }
 .cv-speak {
   border: none; background: transparent; cursor: pointer; color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
   font-size: 14px; padding: 2px 6px; border-radius: 6px; line-height: 1;
 }
-.cv-speak:hover { background: var(--dsw-alias-bg-layer-2); }
+.cv-speak:hover { background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); }
 .cv-meta { display: flex; justify-content: center; gap: 6px; margin-bottom: 10px; }
 .cv-chip {
   font-size: 10.5px; padding: 1px 8px; border-radius: 999px; line-height: 1.6;
   background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 12%, transparent);
   color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
 }
-.cv-chip--rev { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); }
+.cv-chip--rev { background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
 .cv-chip--c6 { background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent); color: var(--dsw-alias-state-warn-primary); }
 .cv-meaning {
-  margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--dsw-alias-border-l2);
+  margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--cv-border-2, var(--dsw-alias-border-l2));
   font-size: 15px; line-height: 1.7; text-align: left; white-space: pre-wrap;
   word-break: break-word; max-height: 180px; overflow-y: auto;
 }
@@ -575,36 +687,36 @@ const CSS = `
   color: var(--dsw-alias-state-error-primary); border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 32%, transparent);
 }
 .cv-grade:hover { filter: brightness(1.06); }
-.cv-done { text-align: center; padding: 26px 8px 18px; color: var(--dsw-alias-label-secondary); }
+.cv-done { text-align: center; padding: 26px 8px 18px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
 .cv-done-emoji { font-size: 34px; margin-bottom: 8px; }
-.cv-done-title { font-size: 15px; font-weight: 600; color: var(--dsw-alias-label-primary); margin-bottom: 4px; }
+.cv-done-title { font-size: 15px; font-weight: 600; color: var(--cv-text, var(--dsw-alias-label-primary)); margin-bottom: 4px; }
 .cv-done-sub { font-size: 12.5px; }
 .cv-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-.cv-tile { background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; padding: 10px 12px; }
+.cv-tile { background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); border-radius: 10px; padding: 10px 12px; }
 .cv-tile-num { font-size: 20px; font-weight: 700; }
-.cv-tile-label { font-size: 11.5px; color: var(--dsw-alias-label-secondary); margin-top: 2px; }
-.cv-boxrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 11.5px; color: var(--dsw-alias-label-secondary); }
+.cv-tile-label { font-size: 11.5px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); margin-top: 2px; }
+.cv-boxrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 11.5px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
 .cv-boxrow-label { width: 76px; flex: none; }
-.cv-boxrow-bar { flex: 1; height: 6px; background: var(--dsw-alias-bg-layer-2); border-radius: 999px; overflow: hidden; }
+.cv-boxrow-bar { flex: 1; height: 6px; background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); border-radius: 999px; overflow: hidden; }
 .cv-boxrow-bar > i { display: block; height: 100%; background: var(--cv-accent, var(--dsw-alias-brand-primary)); opacity: .8; }
 .cv-boxrow-num { width: 34px; text-align: right; flex: none; }
-.cv-set-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.cv-set-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); }
 .cv-set-row:last-of-type { border-bottom: none; }
-.cv-set-label { font-size: 13px; width: 92px; flex: none; color: var(--dsw-alias-label-primary); }
-.cv-seg { display: flex; flex: 1; gap: 4px; background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; padding: 3px; }
+.cv-set-label { font-size: 13px; width: 92px; flex: none; color: var(--cv-text, var(--dsw-alias-label-primary)); }
+.cv-seg { display: flex; flex: 1; gap: 4px; background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); border-radius: 9px; padding: 3px; }
 .cv-seg button {
-  flex: 1; border: none; background: transparent; color: var(--dsw-alias-label-secondary);
+  flex: 1; border: none; background: transparent; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
   font-size: 12.5px; padding: 5px 0; border-radius: 7px; cursor: pointer;
 }
-.cv-seg button:hover { color: var(--dsw-alias-label-primary); }
-.cv-seg button.cv-on { background: var(--dsw-alias-bg-overlay); color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+.cv-seg button:hover { color: var(--cv-text, var(--dsw-alias-label-primary)); }
+.cv-seg button.cv-on { background: var(--cv-surface, var(--dsw-alias-bg-overlay)); color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
 .cv-switch {
   position: relative; width: 40px; height: 22px; border-radius: 999px; border: none; cursor: pointer;
-  background: var(--dsw-alias-bg-layer-2); transition: background .2s ease; flex: none;
+  background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); transition: background .2s ease; flex: none;
 }
 .cv-switch > i {
   position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--dsw-alias-bg-overlay); box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  background: var(--cv-surface, var(--dsw-alias-bg-overlay)); box-shadow: 0 1px 3px rgba(0,0,0,.25);
   transition: left .2s ease;
 }
 .cv-switch--on { background: var(--cv-accent, var(--dsw-alias-brand-primary)); }
@@ -615,7 +727,7 @@ const CSS = `
   color: var(--dsw-alias-state-error-primary); background: transparent;
 }
 .cv-resetbtn:hover { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent); }
-.cv-foot { margin-top: 12px; font-size: 11px; color: var(--dsw-alias-label-secondary); text-align: center; }
+.cv-foot { margin-top: 12px; font-size: 11px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); text-align: center; }
 .cv-pill {
   position: fixed; display: flex; align-items: center; gap: 7px;
   padding: 9px 15px; border-radius: 999px; border: none; cursor: grab; touch-action: none;
@@ -627,9 +739,9 @@ const CSS = `
 .cv-mode-row { display: flex; gap: 6px; margin-bottom: 10px; }
 .cv-mode-btn {
   flex: 1; padding: 6px 0; font-size: 12.5px; cursor: pointer; border-radius: 8px;
-  border: 1px solid var(--dsw-alias-border-l1); background: transparent; color: var(--dsw-alias-label-secondary);
+  border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); background: transparent; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
 }
-.cv-mode-btn--on { background: var(--dsw-alias-bg-layer-1); color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); font-weight: 600; border-color: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 30%, transparent); }
+.cv-mode-btn--on { background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); font-weight: 600; border-color: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 30%, transparent); }
 .cv-practice {
   display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding: 7px 10px;
   background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 10%, transparent);
@@ -641,10 +753,10 @@ const CSS = `
 .cv-quiz-opts { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .cv-opt {
   text-align: left; padding: 10px 12px; font-size: 13.5px; line-height: 1.45; cursor: pointer;
-  border-radius: 10px; border: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary);
+  border-radius: 10px; border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
+  background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); color: var(--cv-text, var(--dsw-alias-label-primary));
 }
-.cv-opt:hover { background: var(--dsw-alias-bg-layer-2); }
+.cv-opt:hover { background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); }
 .cv-opt--correct {
   background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent);
   border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 45%, transparent);
@@ -672,8 +784,8 @@ const CSS = `
 .cv-actionbtn:hover { filter: brightness(1.06); }
 .cv-numinput {
   width: 76px; padding: 5px 8px; font-size: 13px; border-radius: 8px;
-  border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary); outline: none;
+  border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1));
+  color: var(--cv-text, var(--dsw-alias-label-primary)); outline: none;
 }
 .cv-numinput:focus { border-color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); }
 .cv-pill:hover { filter: brightness(1.08); }
@@ -682,7 +794,7 @@ const CSS = `
   background: color-mix(in srgb, var(--cv-accent-fg, #fff) 30%, transparent);
   font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
 }
-.cv-hint { font-size: 11.5px; color: var(--dsw-alias-label-secondary); text-align: center; margin-top: 10px; }
+.cv-hint { font-size: 11.5px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); text-align: center; margin-top: 10px; }
 `
 
 // --------------------------------------------------------------- components
@@ -1259,12 +1371,7 @@ exports.apply = function apply(ctx) {
             else if (mq.removeListener) mq.removeListener(mqHandler)
           }
         } catch (e) {}
-        try {
-          const root = document.documentElement
-          root.style.removeProperty('--cv-accent')
-          root.style.removeProperty('--cv-accent-fg')
-          root.style.removeProperty('--cv-accent-text')
-        } catch (e) {}
+        teardownAccentProbe()
       }
     },
     'dsh-cet-vocab: accent probe',
