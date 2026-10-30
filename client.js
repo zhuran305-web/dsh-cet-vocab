@@ -1032,6 +1032,8 @@ function QuizView({ card, isNew, state, onGrade }) {
 
   React.useEffect(() => {
     if (!answered) return
+    // speak once the answer is revealed, same contract as card mode's reveal
+    if (state.settings.autoSpeak) speak(card.w)
     const id = window.setTimeout(() => onGrade(wasRight ? GRADE_KNOW : GRADE_MISS), 1200)
     return () => window.clearTimeout(id)
   }, [answered]) // eslint-disable-line
