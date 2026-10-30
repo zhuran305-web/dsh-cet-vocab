@@ -200,6 +200,7 @@ const PROBE_VARS = [
   '--cv-surface', '--cv-text', '--cv-text-secondary',
   '--cv-layer-1', '--cv-layer-2', '--cv-border-1', '--cv-border-2',
   '--cv-accent', '--cv-accent-fg', '--cv-accent-text',
+  '--cv-ok', '--cv-warn', '--cv-err',
 ]
 
 let probeStyleEl = null
@@ -290,6 +291,27 @@ function applyAccentProbe() {
         accent = lightened; fg = rgbHex(DARK_FG)
       }
     }
+    // ---- state colors (know / fuzzy / miss, quiz feedback, reset): these are
+    // NOT the brand accent, so they keep following the theme in `auto`, but a
+    // forced-dark panel on a light theme would otherwise print a light-theme
+    // dark-green label on our near-black card and it vanishes. Nudge each one
+    // until it clears 3:1 on every panel shade we actually paint on.
+    const panels = [surface, l1, l2]
+    function readableState(raw, fallback) {
+      let c = parseColor(raw) || fallback
+      for (const panel of panels) {
+        if (contrastRatio(c, panel) < 3.0) {
+          c = relLum(panel) > 0.5
+            ? findMixTo(c, BLACK_RGB, panel, 3.0)
+            : findMixTo(c, WHITE_RGB, panel, 3.2)
+        }
+      }
+      return c
+    }
+    const okC = readableState(inputs[8], [22, 128, 84])
+    const warnC = readableState(inputs[9], [190, 120, 12])
+    const errC = readableState(inputs[10], [214, 69, 65])
+
     // accent used as text on the window body: >=4.5 on the surface
     let accentText = brand
     if (contrastRatio(brand, surface) < 4.5) {
@@ -309,6 +331,9 @@ function applyAccentProbe() {
       '--cv-accent:' + rgbHex(accent) + ';' +
       '--cv-accent-fg:' + fg + ';' +
       '--cv-accent-text:' + rgbHex(accentText) + ';' +
+      '--cv-ok:' + rgbHex(okC) + ';' +
+      '--cv-warn:' + rgbHex(warnC) + ';' +
+      '--cv-err:' + rgbHex(errC) + ';' +
       '}'
   } catch (e) {
     // Probe failed — fall back to the raw tokens so nothing is worse than before.
@@ -323,6 +348,9 @@ function applyAccentProbe() {
       '--cv-accent:' + (inputs[0] || '#3D7EFF') + ';' +
       '--cv-accent-fg:#fff;' +
       '--cv-accent-text:' + (inputs[0] || '#3D7EFF') + ';' +
+      '--cv-ok:' + (inputs[8] || '#168054') + ';' +
+      '--cv-warn:' + (inputs[9] || '#BE780C') + ';' +
+      '--cv-err:' + (inputs[10] || '#D64541') + ';' +
       '}'
   }
 }
@@ -412,7 +440,7 @@ function confusionScore(w, c) {
 function defaultState() {
   return {
     v: 1,
-    settings: { book: 'cet4', dailyNew: 10, autoSpeak: false, mode: 'card', autoOpen: true, appearance: 'auto' },
+    settings: { book: 'cet4', dailyNew: 10, autoSpeak: false, speakOnOpen: false, mode: 'card', autoOpen: true, appearance: 'auto' },
     words: {}, // word -> { box, due, seen, ok, fz, no }
     today: { date: todayStr(), newDone: 0, reviewDone: 0 },
     streak: 0,
@@ -684,7 +712,7 @@ const CSS = `
   color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
 }
 .cv-chip--rev { background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
-.cv-chip--c6 { background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent); color: var(--dsw-alias-state-warn-primary); }
+.cv-chip--c6 { background: color-mix(in srgb, var(--cv-warn, var(--dsw-alias-state-warn-primary)) 14%, transparent); color: var(--cv-warn, var(--dsw-alias-state-warn-primary)); }
 .cv-meaning {
   margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--cv-border-2, var(--dsw-alias-border-l2));
   font-size: 15px; line-height: 1.7; text-align: left; white-space: pre-wrap;
@@ -702,16 +730,16 @@ const CSS = `
   border-radius: 10px; border: 1px solid transparent;
 }
 .cv-grade--know {
-  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 13%, transparent);
-  color: var(--dsw-alias-state-success-primary); border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 32%, transparent);
+  background: color-mix(in srgb, var(--cv-ok, var(--dsw-alias-state-success-primary)) 13%, transparent);
+  color: var(--cv-ok, var(--dsw-alias-state-success-primary)); border-color: color-mix(in srgb, var(--cv-ok, var(--dsw-alias-state-success-primary)) 32%, transparent);
 }
 .cv-grade--fuzzy {
-  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 13%, transparent);
-  color: var(--dsw-alias-state-warn-primary); border-color: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 32%, transparent);
+  background: color-mix(in srgb, var(--cv-warn, var(--dsw-alias-state-warn-primary)) 13%, transparent);
+  color: var(--cv-warn, var(--dsw-alias-state-warn-primary)); border-color: color-mix(in srgb, var(--cv-warn, var(--dsw-alias-state-warn-primary)) 32%, transparent);
 }
 .cv-grade--miss {
-  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 13%, transparent);
-  color: var(--dsw-alias-state-error-primary); border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 32%, transparent);
+  background: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 13%, transparent);
+  color: var(--cv-err, var(--dsw-alias-state-error-primary)); border-color: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 32%, transparent);
 }
 .cv-grade:hover { filter: brightness(1.06); }
 .cv-done { text-align: center; padding: 26px 8px 18px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
@@ -750,10 +778,10 @@ const CSS = `
 .cv-switch--on > i { left: 21px; }
 .cv-resetbtn {
   width: 100%; margin-top: 12px; padding: 8px 0; font-size: 13px; cursor: pointer; border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 40%, transparent);
-  color: var(--dsw-alias-state-error-primary); background: transparent;
+  border: 1px solid color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 40%, transparent);
+  color: var(--cv-err, var(--dsw-alias-state-error-primary)); background: transparent;
 }
-.cv-resetbtn:hover { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent); }
+.cv-resetbtn:hover { background: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 10%, transparent); }
 .cv-foot { margin-top: 12px; font-size: 11px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); text-align: center; }
 .cv-pill {
   position: fixed; display: flex; align-items: center; gap: 7px;
@@ -785,22 +813,22 @@ const CSS = `
 }
 .cv-opt:hover { background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); }
 .cv-opt--correct {
-  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent);
-  border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 45%, transparent);
-  color: var(--dsw-alias-state-success-primary); font-weight: 600;
+  background: color-mix(in srgb, var(--cv-ok, var(--dsw-alias-state-success-primary)) 14%, transparent);
+  border-color: color-mix(in srgb, var(--cv-ok, var(--dsw-alias-state-success-primary)) 45%, transparent);
+  color: var(--cv-ok, var(--dsw-alias-state-success-primary)); font-weight: 600;
 }
 .cv-opt--wrong {
-  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
-  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, transparent);
-  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 12%, transparent);
+  border-color: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 45%, transparent);
+  color: var(--cv-err, var(--dsw-alias-state-error-primary));
 }
 .cv-opt--dim { opacity: .45; pointer-events: none; }
 .cv-feedback {
   margin-top: 12px; padding: 9px 12px; border-radius: 10px; font-size: 13px; line-height: 1.6;
   text-align: left; white-space: pre-wrap; word-break: break-word;
 }
-.cv-feedback--ok { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent); color: var(--dsw-alias-state-success-primary); }
-.cv-feedback--no { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent); color: var(--dsw-alias-state-error-primary); }
+.cv-feedback--ok { background: color-mix(in srgb, var(--cv-ok, var(--dsw-alias-state-success-primary)) 10%, transparent); color: var(--cv-ok, var(--dsw-alias-state-success-primary)); }
+.cv-feedback--no { background: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 10%, transparent); color: var(--cv-err, var(--dsw-alias-state-error-primary)); }
 .cv-done-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
 .cv-actionbtn {
   padding: 9px 0; font-size: 13.5px; font-weight: 600; cursor: pointer; border-radius: 10px;
@@ -1326,7 +1354,7 @@ function VocabApp() {
 // ------------------------------------------------------------- plugin entry
 
 exports.name = PLUGIN_ID
-exports.inject = ['slots', 'locale']
+exports.inject = ['slots', 'locale', 'sessions', 'remote']
 exports.apply = function apply(ctx) {
   ctx.effect(
     () => {
@@ -1412,36 +1440,53 @@ exports.apply = function apply(ctx) {
   )
 
   // Auto-open while the model is thinking: watch any session's `running`
-  // state and expand the minimized pill on the idle->busy transition.
+  // state and (re)open the window on the idle->busy transition. Requires the
+  // `sessions` service (see exports.inject) — community plugins use
+  // ctx.sessions.list.getSnapshot().byId[id].running the same way.
   try {
     let busy = false
+    let lastAutoOpenAt = 0
     const onBusyChange = (now) => {
       if (now === busy) return
       busy = now
       if (!now) return
       const s = store.get()
       if (s.settings.autoOpen === false) return
-      if (s.win && s.win.min) store.minimize(false)
+      const hidden = s.open === false || (s.win && s.win.min)
+      if (!hidden) return
+      // 20 s dampener: rapid running flaps (subagents, approvals) within one
+      // burst should not nag a user who just dismissed the window.
+      const t = Date.now()
+      if (t - lastAutoOpenAt < 20000) return
+      lastAutoOpenAt = t
+      store.set((st) => { st.open = true; st.win = { ...st.win, min: false } })
     }
-    const sessionsList = ctx.sessions && ctx.sessions.list
+    const readBusy = (list) => {
+      try {
+        const snap = list.getSnapshot()
+        const rows = snap && snap.byId ? Object.values(snap.byId) : []
+        onBusyChange(rows.some((r) => r && r.running === true))
+      } catch (e) { /* session list unavailable */ }
+    }
+    let sessionsList = (ctx.sessions && ctx.sessions.list) || undefined
+    if (!sessionsList && typeof ctx.get === 'function') {
+      try { const svc = ctx.get('sessions'); if (svc && svc.list) sessionsList = svc.list } catch (e) { /* not provided yet */ }
+    }
     if (sessionsList && typeof sessionsList.subscribe === 'function') {
       ctx.effect(() => {
-        const readNow = () => {
-          try {
-            const snap = sessionsList.getSnapshot()
-            const rows = snap && snap.byId ? Object.values(snap.byId) : []
-            onBusyChange(rows.some((r) => r && r.running === true))
-          } catch (e) { /* session list unavailable */ }
-        }
-        const dispose = sessionsList.subscribe(readNow)
-        readNow()
+        const dispose = sessionsList.subscribe(() => readBusy(sessionsList))
+        readBusy(sessionsList)
         return dispose
       }, 'dsh-cet-vocab: session busy watcher')
-    } else if (ctx.remote && typeof ctx.remote.$on === 'function') {
-      ctx.effect(
-        () => ctx.remote.$on('api-session/status', (sessionId, running) => onBusyChange(!!running)),
-        'dsh-cet-vocab: remote status watcher',
-      )
+    } else {
+      // Last resort: poll every 1.5 s until the session list shows up.
+      ctx.effect(() => {
+        if (ctx.timer && typeof ctx.timer.interval === 'function') {
+          return ctx.timer.interval(() => { if (sessionsList) readBusy(sessionsList) }, 1500)
+        }
+        const id = setInterval(() => { if (sessionsList) readBusy(sessionsList) }, 1500)
+        return () => clearInterval(id)
+      }, 'dsh-cet-vocab: session busy poller')
     }
   } catch (e) {
     console.warn('[dsh-cet-vocab] busy watcher unavailable', e)
