@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 /**
- * Build dsh-cet-vocab/client.js:
- *   client.src.js  with  /*__WORDS__*​/  replaced by  const CET_WORDS = {...};
- * then syntax-check the result with node --check.
+ * Build dsh-cet-vocab/client.js (repo layout):
+ *   scripts/ lives inside the package, client.src.js and data/words.json
+ *   sit next to it. `/*__WORDS__*​/` in the source is replaced by
+ *   `const CET_WORDS = {...};`, then the result is syntax-checked.
  */
 import { readFileSync, writeFileSync, statSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
-const root = fileURLToPath(new URL('.', import.meta.url)) // .../四六级/scripts/
-const pkg = join(root, '..', 'dsh-cet-vocab')
+const scripts = fileURLToPath(new URL('.', import.meta.url)) // <pkg>/scripts/
+const pkg = join(scripts, '..')
 const src = readFileSync(join(pkg, 'client.src.js'), 'utf8')
-const words = JSON.parse(readFileSync(join(root, '..', 'data', 'words.json'), 'utf8'))
+const words = JSON.parse(readFileSync(join(pkg, 'data', 'words.json'), 'utf8'))
 
 const wordsLiteral =
   'const CET_WORDS = ' + JSON.stringify(words) + ';\n'

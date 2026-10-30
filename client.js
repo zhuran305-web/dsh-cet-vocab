@@ -68,6 +68,142 @@ function speak(word) {
   } catch (e) { /* speech is best-effort */ }
 }
 
+// ------------------------------------------------- adaptive accent colors
+//
+// Themes put wildly different values in --dsw-alias-brand-primary (the
+// default theme's is pale enough to vanish behind white text). Instead of
+// hardcoding an accent, measure the real color once per theme change and
+// derive three readable variables: --cv-accent (solid background),
+// --cv-accent-fg (text on it), --cv-accent-text (accent used as text on
+// surfaces). Every rule below falls back to the raw token before the probe
+// has run, so first paint is never worse than today.
+
+function cssVar(name) {
+  try {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  } catch (e) { return '' }
+}
+
+function parseColor(str) {
+  if (!str) return null
+  str = String(str).trim().toLowerCase()
+  let m = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(str)
+  if (m) return [parseInt(m[1] + m[1], 16), parseInt(m[2] + m[2], 16), parseInt(m[3] + m[3], 16)]
+  m = /^#([0-9a-f]{6})$/.exec(str)
+  if (m) return [parseInt(str.slice(1, 3), 16), parseInt(str.slice(3, 5), 16), parseInt(str.slice(5, 7), 16)]
+  m = /^rgba?\(([^)]+)\)$/.exec(str)
+  if (m) {
+    const parts = m[1].split(/[,\s/]+/).filter(Boolean).map(Number)
+    if (parts.length >= 3 && parts.slice(0, 3).every((n) => !isNaN(n))) return parts.slice(0, 3)
+  }
+  // Any other CSS color form (hsl/oklch/named/…): let the browser parse it.
+  try {
+    let cv = parseColor._cv
+    if (!cv) { cv = parseColor._cv = document.createElement('canvas'); cv.width = 1; cv.height = 1 }
+    const g = cv.getContext('2d')
+    g.clearRect(0, 0, 1, 1)
+    g.fillStyle = '#000'
+    g.fillStyle = str
+    g.fillRect(0, 0, 1, 1)
+    const d = g.getImageData(0, 0, 1, 1).data
+    if (d[3] === 0) return null
+    return [d[0], d[1], d[2]]
+  } catch (e) { return null }
+}
+
+function srgbToLin(c) {
+  c /= 255
+  return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+}
+
+function relLum(rgb) {
+  return 0.2126 * srgbToLin(rgb[0]) + 0.7152 * srgbToLin(rgb[1]) + 0.0722 * srgbToLin(rgb[2])
+}
+
+function contrastRatio(a, b) {
+  const l1 = Math.max(relLum(a), relLum(b))
+  const l2 = Math.min(relLum(a), relLum(b))
+  return (l1 + 0.05) / (l2 + 0.05)
+}
+
+function mixRgb(a, b, t) {
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * t),
+    Math.round(a[1] + (b[1] - a[1]) * t),
+    Math.round(a[2] + (b[2] - a[2]) * t),
+  ]
+}
+
+function rgbHex(rgb) {
+  return '#' + rgb.map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0')).join('')
+}
+
+const BLACK_RGB = [0, 0, 0]
+const WHITE_RGB = [255, 255, 255]
+const DARK_FG = [18, 22, 28]
+
+/** Smallest mix ratio of `base` toward `toward` that clears `min` contrast vs `against`. */
+function findMixTo(base, toward, against, min) {
+  let lo = 0, hi = 1
+  if (contrastRatio(mixRgb(base, toward, 1), against) < min) return mixRgb(base, toward, 1)
+  while (hi - lo > 0.02) {
+    const mid = (lo + hi) / 2
+    if (contrastRatio(mixRgb(base, toward, mid), against) >= min) hi = mid
+    else lo = mid
+  }
+  return mixRgb(base, toward, hi)
+}
+
+let accentProbeMemo = null
+function applyAccentProbe() {
+  try {
+    const root = document.documentElement
+    const brandRaw = cssVar('--dsw-alias-brand-primary')
+    const overlayRaw = cssVar('--dsw-alias-bg-overlay')
+    const memo = brandRaw + '|' + overlayRaw
+    if (memo === accentProbeMemo && root.style.getPropertyValue('--cv-accent')) return
+    accentProbeMemo = memo
+    let brand = parseColor(brandRaw)
+    const overlay = parseColor(cssVar('--dsw-alias-bg-overlay')) || [245, 246, 248]
+    if (!brand) brand = [61, 126, 255] // same blue as the plugin icon
+    let accent, fg
+    // Button labels are semibold, so white-on-accent at >=3 (AA large/bold)
+    // is kept — that preserves the familiar blue-pill-with-white-text look
+    // on saturated themes. Anything palier falls through to dark text or a
+    // recomputed accent until it clears 4.5.
+    if (contrastRatio(brand, WHITE_RGB) >= 3.0) { accent = brand; fg = '#ffffff' }
+    else if (contrastRatio(brand, DARK_FG) >= 4.5) { accent = brand; fg = rgbHex(DARK_FG) }
+    else {
+      const darkened = findMixTo(brand, BLACK_RGB, WHITE_RGB, 4.5)
+      const lightened = findMixTo(brand, WHITE_RGB, DARK_FG, 4.5)
+      if (contrastRatio(darkened, WHITE_RGB) >= contrastRatio(lightened, DARK_FG)) {
+        accent = darkened; fg = '#ffffff'
+      } else {
+        accent = lightened; fg = rgbHex(DARK_FG)
+      }
+    }
+    let text = brand
+    if (contrastRatio(brand, overlay) < 3) {
+      text = relLum(overlay) > 0.5
+        ? findMixTo(brand, BLACK_RGB, overlay, 4.5)
+        : findMixTo(brand, WHITE_RGB, overlay, 4.5)
+    }
+    root.style.setProperty('--cv-accent', rgbHex(accent))
+    root.style.setProperty('--cv-accent-fg', fg)
+    root.style.setProperty('--cv-accent-text', rgbHex(text))
+  } catch (e) {
+    // Probe failed — keep the raw token as every derived variable so nothing
+    // worse than the old behavior can happen.
+    try {
+      const root = document.documentElement
+      const raw = cssVar('--dsw-alias-brand-primary') || '#3D7EFF'
+      root.style.setProperty('--cv-accent', raw)
+      root.style.setProperty('--cv-accent-fg', '#fff')
+      root.style.setProperty('--cv-accent-text', raw)
+    } catch (e2) { /* give up quietly */ }
+  }
+}
+
 // ------------------------------------------------- look-alike word matching
 
 function commonPrefixLen(a, b) {
@@ -390,7 +526,7 @@ const CSS = `
 .cv-today { display: flex; align-items: baseline; gap: 10px; font-size: 12px; color: var(--dsw-alias-label-secondary); margin-bottom: 6px; }
 .cv-today b { color: var(--dsw-alias-label-primary); font-weight: 600; }
 .cv-bar { height: 4px; border-radius: 999px; background: var(--dsw-alias-bg-layer-2); overflow: hidden; margin-bottom: 12px; }
-.cv-bar > i { display: block; height: 100%; background: var(--dsw-alias-brand-primary); border-radius: 999px; transition: width .35s ease; }
+.cv-bar > i { display: block; height: 100%; background: var(--cv-accent, var(--dsw-alias-brand-primary)); border-radius: 999px; transition: width .35s ease; }
 .cv-card {
   background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 12px; padding: 18px 16px 16px; text-align: center; user-select: text;
@@ -398,15 +534,15 @@ const CSS = `
 .cv-word { font-size: 28px; font-weight: 700; letter-spacing: .2px; word-break: break-word; }
 .cv-phon { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 4px; color: var(--dsw-alias-label-secondary); font-size: 13px; min-height: 20px; }
 .cv-speak {
-  border: none; background: transparent; cursor: pointer; color: var(--dsw-alias-brand-primary);
+  border: none; background: transparent; cursor: pointer; color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
   font-size: 14px; padding: 2px 6px; border-radius: 6px; line-height: 1;
 }
 .cv-speak:hover { background: var(--dsw-alias-bg-layer-2); }
 .cv-meta { display: flex; justify-content: center; gap: 6px; margin-bottom: 10px; }
 .cv-chip {
   font-size: 10.5px; padding: 1px 8px; border-radius: 999px; line-height: 1.6;
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
-  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 12%, transparent);
+  color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
 }
 .cv-chip--rev { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); }
 .cv-chip--c6 { background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent); color: var(--dsw-alias-state-warn-primary); }
@@ -418,7 +554,7 @@ const CSS = `
 .cv-reveal {
   width: 100%; margin-top: 14px; padding: 9px 0; font-size: 14px; font-weight: 600;
   border: none; border-radius: 10px; cursor: pointer;
-  background: var(--dsw-alias-brand-primary); color: #fff;
+  background: var(--cv-accent, var(--dsw-alias-brand-primary)); color: var(--cv-accent-fg, #fff);
 }
 .cv-reveal:hover { filter: brightness(1.08); }
 .cv-grades { display: flex; gap: 8px; margin-top: 14px; }
@@ -450,7 +586,7 @@ const CSS = `
 .cv-boxrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 11.5px; color: var(--dsw-alias-label-secondary); }
 .cv-boxrow-label { width: 76px; flex: none; }
 .cv-boxrow-bar { flex: 1; height: 6px; background: var(--dsw-alias-bg-layer-2); border-radius: 999px; overflow: hidden; }
-.cv-boxrow-bar > i { display: block; height: 100%; background: var(--dsw-alias-brand-primary); opacity: .8; }
+.cv-boxrow-bar > i { display: block; height: 100%; background: var(--cv-accent, var(--dsw-alias-brand-primary)); opacity: .8; }
 .cv-boxrow-num { width: 34px; text-align: right; flex: none; }
 .cv-set-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .cv-set-row:last-of-type { border-bottom: none; }
@@ -461,7 +597,7 @@ const CSS = `
   font-size: 12.5px; padding: 5px 0; border-radius: 7px; cursor: pointer;
 }
 .cv-seg button:hover { color: var(--dsw-alias-label-primary); }
-.cv-seg button.cv-on { background: var(--dsw-alias-bg-overlay); color: var(--dsw-alias-brand-primary); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+.cv-seg button.cv-on { background: var(--dsw-alias-bg-overlay); color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
 .cv-switch {
   position: relative; width: 40px; height: 22px; border-radius: 999px; border: none; cursor: pointer;
   background: var(--dsw-alias-bg-layer-2); transition: background .2s ease; flex: none;
@@ -471,7 +607,7 @@ const CSS = `
   background: var(--dsw-alias-bg-overlay); box-shadow: 0 1px 3px rgba(0,0,0,.25);
   transition: left .2s ease;
 }
-.cv-switch--on { background: var(--dsw-alias-brand-primary); }
+.cv-switch--on { background: var(--cv-accent, var(--dsw-alias-brand-primary)); }
 .cv-switch--on > i { left: 21px; }
 .cv-resetbtn {
   width: 100%; margin-top: 12px; padding: 8px 0; font-size: 13px; cursor: pointer; border-radius: 10px;
@@ -483,7 +619,7 @@ const CSS = `
 .cv-pill {
   position: fixed; display: flex; align-items: center; gap: 7px;
   padding: 9px 15px; border-radius: 999px; border: none; cursor: grab; touch-action: none;
-  background: var(--dsw-alias-brand-primary); color: #fff; font-size: 13.5px; font-weight: 600;
+  background: var(--cv-accent, var(--dsw-alias-brand-primary)); color: var(--cv-accent-fg, #fff); font-size: 13.5px; font-weight: 600;
   box-shadow: 0 8px 22px rgba(0,0,0,.28); user-select: none;
 }
 .cv-pill:active { cursor: grabbing; }
@@ -493,15 +629,15 @@ const CSS = `
   flex: 1; padding: 6px 0; font-size: 12.5px; cursor: pointer; border-radius: 8px;
   border: 1px solid var(--dsw-alias-border-l1); background: transparent; color: var(--dsw-alias-label-secondary);
 }
-.cv-mode-btn--on { background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-brand-primary); font-weight: 600; border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent); }
+.cv-mode-btn--on { background: var(--dsw-alias-bg-layer-1); color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); font-weight: 600; border-color: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 30%, transparent); }
 .cv-practice {
   display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding: 7px 10px;
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 28%, transparent);
-  border-radius: 10px; font-size: 12.5px; color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 28%, transparent);
+  border-radius: 10px; font-size: 12.5px; color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
 }
 .cv-practice-x { margin-left: auto; border: none; background: transparent; color: inherit; cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 6px; }
-.cv-practice-x:hover { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent); }
+.cv-practice-x:hover { background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 16%, transparent); }
 .cv-quiz-opts { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .cv-opt {
   text-align: left; padding: 10px 12px; font-size: 13.5px; line-height: 1.45; cursor: pointer;
@@ -529,9 +665,9 @@ const CSS = `
 .cv-done-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
 .cv-actionbtn {
   padding: 9px 0; font-size: 13.5px; font-weight: 600; cursor: pointer; border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 38%, transparent);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent);
-  color: var(--dsw-alias-brand-primary);
+  border: 1px solid color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 38%, transparent);
+  background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 10%, transparent);
+  color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
 }
 .cv-actionbtn:hover { filter: brightness(1.06); }
 .cv-numinput {
@@ -539,10 +675,11 @@ const CSS = `
   border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary); outline: none;
 }
-.cv-numinput:focus { border-color: var(--dsw-alias-brand-primary); }
+.cv-numinput:focus { border-color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); }
 .cv-pill:hover { filter: brightness(1.08); }
 .cv-pill-badge {
-  min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px; background: rgba(255,255,255,.28);
+  min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px;
+  background: color-mix(in srgb, var(--cv-accent-fg, #fff) 30%, transparent);
   font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
 }
 .cv-hint { font-size: 11.5px; color: var(--dsw-alias-label-secondary); text-align: center; margin-top: 10px; }
@@ -1082,6 +1219,55 @@ exports.apply = function apply(ctx) {
       { name: 'shell.overlay', id: 'cet-vocab', order: 45, label: () => t('title') },
       VocabApp,
     ),
+  )
+
+  // Accent contrast probe: re-derive --cv-accent* whenever the theme can
+  // change — theme/event switches, light-vs-dark flips, or any slot change
+  // (theme packages re-emit tokens through their own registrations).
+  ctx.effect(
+    () => {
+      applyAccentProbe()
+      const offs = []
+      try { if (typeof ctx.on === 'function') offs.push(ctx.on('theme/change', applyAccentProbe)) } catch (e) {}
+      try { if (typeof ctx.on === 'function') offs.push(ctx.on('slots/changed', applyAccentProbe)) } catch (e) {}
+      // Watch the html element for class/attribute mutations (theme switches
+      // toggle `data-theme`/`class`) instead of relying on ctx.on signatures.
+      let observer = null
+      try {
+        if (typeof MutationObserver === 'function') {
+          observer = new MutationObserver(() => applyAccentProbe())
+          observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'data-dsh-theme', 'style'] })
+        }
+      } catch (e) { /* observer unavailable */ }
+      let mq = null, mqHandler = null
+      try {
+        if (typeof window.matchMedia === 'function') {
+          mq = window.matchMedia('(prefers-color-scheme: dark)')
+          mqHandler = () => applyAccentProbe()
+          if (mq.addEventListener) mq.addEventListener('change', mqHandler)
+          else if (mq.addListener) mq.addListener(mqHandler)
+        }
+      } catch (e) { /* no media query support */ }
+      // The probe writes three custom properties on <html>; restore the page
+      // by deleting them on teardown (unload or plugin disable).
+      return () => {
+        for (const off of offs) { try { if (typeof off === 'function') off() } catch (e) {} }
+        try { if (observer) observer.disconnect() } catch (e) {}
+        try {
+          if (mq && mqHandler) {
+            if (mq.removeEventListener) mq.removeEventListener('change', mqHandler)
+            else if (mq.removeListener) mq.removeListener(mqHandler)
+          }
+        } catch (e) {}
+        try {
+          const root = document.documentElement
+          root.style.removeProperty('--cv-accent')
+          root.style.removeProperty('--cv-accent-fg')
+          root.style.removeProperty('--cv-accent-text')
+        } catch (e) {}
+      }
+    },
+    'dsh-cet-vocab: accent probe',
   )
 
   // Auto-open while the model is thinking: watch any session's `running`
