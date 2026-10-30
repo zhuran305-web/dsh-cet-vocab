@@ -1,0 +1,7 @@
+# dsh-cet-vocab bundle patch: one insert over the profile tree.
+#
+# Host half is a stub; the browser half renders the floating vocab window in
+# `shell.overlay` (same seat dsh-todo-board uses, order 45).
+- insert:
+    - id: cet-vocab
+      name: 'dsh-cet-vocab'
