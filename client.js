@@ -209,6 +209,7 @@ function probeStyleSheet() {
 
 let probeMemo = null
 function applyAccentProbe() {
+  const appearance = (store.get().settings || {}).appearance || 'auto'
   const inputs = [
     cssVar('--dsw-alias-brand-primary'),
     cssVar('--dsw-alias-bg-overlay'),
@@ -219,18 +220,27 @@ function applyAccentProbe() {
     cssVar('--dsw-alias-border-l1'),
     cssVar('--dsw-alias-border-l2'),
   ]
-  const memo = inputs.join('|')
+  const memo = appearance + '|' + inputs.join('|')
   if (memo === probeMemo && probeStyleEl && probeStyleEl.textContent) return
   probeMemo = memo
   try {
     let brand = parseColor(inputs[0])
-    const overlay = parseColor(inputs[1]) || [245, 246, 248]
-    const layer1 = parseColor(inputs[2]) || mixRgb(overlay, BLACK_RGB, 0.05)
-    const layer2 = parseColor(inputs[3]) || mixRgb(overlay, BLACK_RGB, 0.1)
+    let overlay = parseColor(inputs[1]) || [245, 246, 248]
+    let layer1 = parseColor(inputs[2]) || mixRgb(overlay, BLACK_RGB, 0.05)
+    let layer2 = parseColor(inputs[3]) || mixRgb(overlay, BLACK_RGB, 0.1)
     let text = parseColor(inputs[4]) || [24, 26, 30]
     let text2 = parseColor(inputs[5]) || mixRgb(text, overlay, 0.35)
     let surface = overlay
     if (!brand) brand = [61, 126, 255] // same blue as the plugin icon
+
+    // ---- forced dark: override every surface token except the brand accent
+    if (appearance === 'dark') {
+      surface = [20, 22, 26]
+      text = [236, 238, 241]
+      text2 = mixRgb(text, surface, 0.42)
+      layer1 = [34, 38, 44]
+      layer2 = [46, 51, 59]
+    }
 
     // ---- window surface & text: guarantee readable body text
     let pair = solvePair(surface, text, 4.5)
@@ -388,7 +398,7 @@ function confusionScore(w, c) {
 function defaultState() {
   return {
     v: 1,
-    settings: { book: 'cet4', dailyNew: 10, autoSpeak: false, mode: 'card', autoOpen: true },
+    settings: { book: 'cet4', dailyNew: 10, autoSpeak: false, mode: 'card', autoOpen: true, appearance: 'auto' },
     words: {}, // word -> { box, due, seen, ok, fz, no }
     today: { date: todayStr(), newDone: 0, reviewDone: 0 },
     streak: 0,
@@ -443,7 +453,10 @@ const store = {
   },
   minimize(min) { store.set((s) => { s.win = { ...s.win, min } }) },
   setGeom(x, y) { store.set((s) => { s.win = { ...s.win, x, y } }) },
-  setSettings(patch) { store.set((s) => { s.settings = { ...s.settings, ...patch } }) },
+  setSettings(patch) {
+    store.set((s) => { s.settings = { ...s.settings, ...patch } })
+    try { applyAccentProbe() } catch (e) {}
+  },
   reset() {
     store.set((s) => {
       const keep = { win: s.win, open: s.open }
@@ -576,8 +589,8 @@ function bookStats(state) {
 
 // ------------------------------------------------------------------- locale
 
-const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","settingsSpeak":"显示释义时自动发音","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","settingsCustom":"自定义","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖"}
-const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","settingsSpeak":"Speak on reveal","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","settingsCustom":"Custom","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖"}
+const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","settingsSpeak":"显示释义时自动发音","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","settingsCustom":"自定义","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色"}
+const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","settingsSpeak":"Speak on reveal","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","settingsCustom":"Custom","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark"}
 
 let localeBinder = null
 const t = (key) => {
@@ -1173,6 +1186,13 @@ function SettingsView({ state }) {
         { v: 'cet6', label: t('cet6') },
         { v: 'all', label: t('all') },
       ], (v) => store.setSettings({ book: v })),
+    ),
+    h('div', { className: 'cv-set-row' },
+      h('span', { className: 'cv-set-label' }, t('settingsAppearance')),
+      seg(state.settings.appearance || 'auto', [
+        { v: 'auto', label: t('appearanceAuto') },
+        { v: 'dark', label: t('appearanceDark') },
+      ], (v) => store.setSettings({ appearance: v })),
     ),
     h('div', { className: 'cv-set-row' },
       h('span', { className: 'cv-set-label' }, t('settingsDaily')),
