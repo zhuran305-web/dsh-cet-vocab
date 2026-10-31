@@ -3,3 +3,7 @@ data/ecdict.csv
 node_modules/
 *.log
 .DS_Store
+
+# released tarballs live on GitHub Releases (and the market entry points at
+# releases/latest/download), so the packed artifacts stay out of git.
+dist/
