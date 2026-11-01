@@ -1,6 +1,6 @@
 {
   "name": "dsh-cet-vocab",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "背单词（四六级）：shell.overlay 悬浮词卡，可拖动、可最小化、可缩放；三键评分与形近词干扰的选择题 + 艾宾浩斯间隔复习；Alt+Q 等快捷键随时调出；在线美/英真人发音；词库 5805 词（四级 3849 / 六级 5407），内嵌自 ECDICT（MIT）。",
   "type": "module",
   "license": "MIT",
