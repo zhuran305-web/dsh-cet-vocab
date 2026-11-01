@@ -38,6 +38,24 @@ node scripts/build_client.mjs   # embeds data/words.json into client.js
 
 `data/words.json` is generated from ECDICT (`scripts/build_words.py` filters the `cet4`/`cet6` tags); download the [ECDICT](https://github.com/skywind3000/ECDICT) release CSV to `data/ecdict.csv` to regenerate it.
 
+## Release / 发版
+
+```sh
+node scripts/release.mjs 0.2.2 --dry-run   # 彩排：构建/冒烟/打包/解包复核/临时 profile 安装验证，然后自动还原
+node scripts/release.mjs 0.2.2             # 正式发版：提交推送 → tag → GitHub Release → npm publish → 核验
+```
+
+One command runs the whole chain: sync the three i18n places, bump the version, rebuild `client.js`, smoke-test the working copy, pack, unpack the tarball and smoke-test it again (byte-comparing `client.js` against the build), install the tarball into a throwaway DSH profile through the real CLI, then commit, tag, publish a GitHub Release and publish to npm — verifying both channels afterwards. 一条命令跑完整条发版链路，失败时会还原 dry-run 产生的临时改动。
+
+| script | what it does |
+| --- | --- |
+| `scripts/release.mjs` | the one-command release above (`--dry-run`, `--no-npm`, `--no-github`, `--skip-smoke`, …) |
+| `scripts/build_client.mjs` | embeds `data/words.json` into `client.js` and syntax-checks the result |
+| `scripts/sync_locale.mjs [--check]` | keeps `locale/zh.json` + `locale/en.json` identical to the inline dictionaries in `client.src.js` |
+| `scripts/smoke_release_install.mjs [dir] [reference client.js]` | 56–57 structural checks: package fields, `shell.overlay` registration, locale wiring, embedded word list |
+
+Requirements: an authenticated `gh`, and an npm **granular access token with “Bypass 2FA” enabled** (npm requires 2FA, or such a token, to publish) supplied via `--token-file` or `NPM_TOKEN_FILE`. GitHub traffic uses the proxy from `--proxy` (default `http://127.0.0.1:7897`); npm is deliberately called without a proxy. The npm credential is written to a temporary userconfig and deleted afterwards — `~/.npmrc` is never touched. 需要已登录的 `gh`，以及开启 Bypass 2FA 的 npm granular token；GitHub 走代理、npm 不走代理，凭据只落在临时配置里且用完即删。
+
 ## Data license / 词库来源
 
 The word list is extracted from [ECDICT](https://github.com/skywind3000/ECDICT) (MIT License, © skywind3000). Everything else is MIT — see [LICENSE](LICENSE).
