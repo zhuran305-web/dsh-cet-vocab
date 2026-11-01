@@ -595,7 +595,7 @@ function defaultState() {
     today: { date: todayStr(), newDone: 0, reviewDone: 0 },
     streak: 0,
     lastDay: '',
-    win: { x: null, y: null, min: false },
+    win: { x: null, y: null, min: false, scale: 1 },
     open: true,
     practice: null,
   }
@@ -660,6 +660,20 @@ const store = {
     })
   },
   setGeom(x, y) { store.set((s) => { s.win = { ...s.win, x, y } }) },
+  // The window is one CSS transform, so the stored number is the zoom factor
+  // the whole card (text included) is drawn at, not a pixel width.
+  setScale(scale) {
+    store.set((s) => {
+      const z = clampScale(scale)
+      const next = { ...s.win, scale: z }
+      // Same rules beginDrag() uses, against the *visual* box.
+      if (next.x != null && typeof window !== 'undefined') {
+        next.x = Math.round(clamp(next.x, 8 - WIN_W * z + 90, window.innerWidth - 90))
+        next.y = Math.round(clamp(next.y, 6, window.innerHeight - 42))
+      }
+      s.win = next
+    })
+  },
   setSettings(patch) {
     store.set((s) => { s.settings = { ...s.settings, ...patch } })
     try { applyAccentProbe() } catch (e) {}
@@ -811,8 +825,8 @@ function bookStats(state) {
 
 // ------------------------------------------------------------------- locale
 
-const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","settingsLearn":"学习","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","dailyPerDay":"{n} 词/天","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","quizNext":"下一个","quizStay":"答错会停在这里，按 → 或点「下一个」继续","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色","hintCard":"Space 显示释义 · 1/2/3 评分","scTitle":"快捷键","scToggle":"展开 / 收起悬浮窗","scModeCard":"切换到卡片模式","scModeQuiz":"切换到选择题模式","scSpeak":"朗读当前单词","scReveal":"显示释义","scGrade":"认识 / 模糊 / 不认识","scPick":"选择答案 1-4","scNext":"下一个词（答完题后）","scNote":"单键（Space、数字）只在窗口展开且光标不在输入框时生效；Alt 组合键在页面任何位置都能用。","scReview":"复习稍后到期的词（最多 20 个）","scExtra":"加练 10 个生词","scExit":"退出加练（加练中）","practiceNoReview":"暂时没有待复习的词","practiceNoExtra":"没有更多生词可以加练"}
-const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","settingsLearn":"Learning","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","dailyPerDay":"{n} / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","quizNext":"Next","quizStay":"Wrong answers stay put — press → to continue","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark","hintCard":"Space reveal · 1/2/3 grade","scTitle":"Keyboard shortcuts","scToggle":"Expand / collapse the window","scModeCard":"Switch to card mode","scModeQuiz":"Switch to quiz mode","scSpeak":"Speak the current word","scReveal":"Reveal the meaning","scGrade":"Known / Fuzzy / Miss","scPick":"Pick an answer (1-4)","scNext":"Next word (after answering)","scNote":"Single keys (Space, digits) work only while the window is expanded and the caret is not in a text field; Alt combos work anywhere on the page.","scReview":"Review words due later (up to 20)","scExtra":"Practise 10 new words","scExit":"Exit practice (while practising)","practiceNoReview":"Nothing due for review yet","practiceNoExtra":"No more new words to practise"}
+const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","settingsLearn":"学习","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","dailyPerDay":"{n} 词/天","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","resizeHint":"拖动改变大小 · 双击复位","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","quizNext":"下一个","quizStay":"答错会停在这里，按 → 或点「下一个」继续","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色","hintCard":"Space 显示释义 · 1/2/3 评分","scTitle":"快捷键","scToggle":"展开 / 收起悬浮窗","scModeCard":"切换到卡片模式","scModeQuiz":"切换到选择题模式","scSpeak":"朗读当前单词","scReveal":"显示释义","scGrade":"认识 / 模糊 / 不认识","scPick":"选择答案 1-4","scNext":"下一个词（答完题后）","scNote":"单键（Space、数字）只在窗口展开且光标不在输入框时生效；Alt 组合键在页面任何位置都能用。","scReview":"复习稍后到期的词（最多 20 个）","scExtra":"加练 10 个生词","scExit":"退出加练（加练中）","practiceNoReview":"暂时没有待复习的词","practiceNoExtra":"没有更多生词可以加练"}
+const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","settingsLearn":"Learning","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","dailyPerDay":"{n} / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","resizeHint":"Drag to resize · double-click to reset","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","quizNext":"Next","quizStay":"Wrong answers stay put — press → to continue","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark","hintCard":"Space reveal · 1/2/3 grade","scTitle":"Keyboard shortcuts","scToggle":"Expand / collapse the window","scModeCard":"Switch to card mode","scModeQuiz":"Switch to quiz mode","scSpeak":"Speak the current word","scReveal":"Reveal the meaning","scGrade":"Known / Fuzzy / Miss","scPick":"Pick an answer (1-4)","scNext":"Next word (after answering)","scNote":"Single keys (Space, digits) work only while the window is expanded and the caret is not in a text field; Alt combos work anywhere on the page.","scReview":"Review words due later (up to 20)","scExtra":"Practise 10 new words","scExit":"Exit practice (while practising)","practiceNoReview":"Nothing due for review yet","practiceNoExtra":"No more new words to practise"}
 
 let localeBinder = null
 const t = (key) => {
@@ -839,7 +853,23 @@ const CSS = `
   box-shadow: 0 18px 48px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.12);
   user-select: none;
 }
-.cv-window--default { right: 24px; top: 88px; }
+/* Positioned from the left so the --cv-scale custom property can be folded
+   into the default offset: the box is 384px wide in layout units and scaled
+   around its top-left corner, so its visual width is 384 * --cv-scale. */
+.cv-window--default { left: calc(100vw - 24px - 384px * var(--cv-scale, 1)); top: 88px; }
+.cv-resize {
+  position: absolute; right: 0; bottom: 0; width: 18px; height: 18px;
+  display: flex; align-items: flex-end; justify-content: flex-end;
+  padding: 0 3px 3px 0; cursor: nwse-resize; touch-action: none;
+  color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); opacity: .5;
+  border-bottom-right-radius: 14px;
+}
+.cv-resize:hover, .cv-resize:active { opacity: 1; }
+.cv-resize > i {
+  display: block; width: 9px; height: 9px;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  border-bottom-right-radius: 2px;
+}
 .cv-head {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 10px 8px 14px; cursor: grab; touch-action: none;
@@ -1207,6 +1237,55 @@ function useLocaleTick() {
 let ctxLocaleSubscribe = null
 
 let dragMoved = false // true when a drag actually moved; suppresses pill click-to-open
+
+// Resize is a single CSS transform on `.cv-window`, so the whole card — text,
+// padding, borders — scales as one. 384 is the layout width the stylesheet is
+// written against; the visual width is always 384 * scale.
+const WIN_W = 384
+const SCALE_MIN = 0.7
+const SCALE_MAX = 2
+function clampScale(v) {
+  if (v == null || v === '') return 1 // missing in the saved geometry
+  const n = Number(v)
+  if (!isFinite(n)) return 1
+  return clamp(n, SCALE_MIN, SCALE_MAX)
+}
+function winScale(geom) {
+  return clampScale(geom && geom.scale)
+}
+
+function beginResize(e, geom) {
+  if (e.button !== 0) return
+  const el = e.currentTarget.closest('.cv-window')
+  if (!el) return
+  const startX = e.clientX
+  const startZ = winScale(geom)
+  const grip = e.currentTarget
+  let last = null
+  const move = (ev) => {
+    // Screen pixels map to scale 1:1 over the layout width, independent of the
+    // current zoom — dragging 384px right always doubles the size.
+    const z = clampScale(startZ + (ev.clientX - startX) / WIN_W)
+    last = z
+    el.style.setProperty('--cv-scale', String(z))
+    el.style.transform = 'scale(' + z + ')'
+    el.style.maxHeight = 'min(calc(74vh / ' + z + '), 660px)'
+  }
+  const up = () => {
+    try { grip.releasePointerCapture(e.pointerId) } catch (err) {}
+    grip.removeEventListener('pointermove', move)
+    grip.removeEventListener('pointerup', up)
+    grip.removeEventListener('pointercancel', up)
+    if (last != null) store.setScale(last)
+  }
+  try { grip.setPointerCapture(e.pointerId) } catch (err) {}
+  grip.addEventListener('pointermove', move)
+  grip.addEventListener('pointerup', up)
+  grip.addEventListener('pointercancel', up)
+  e.preventDefault()
+  e.stopPropagation() // never start a window drag from the resize grip
+}
+
 function beginDrag(e, geom) {
   if (e.button !== 0) return
   if (e.target && e.target.closest && e.target.closest('button')) return
@@ -1742,9 +1821,16 @@ function VocabWindow() {
   const due = React.useMemo(() => buildQueue(state, now), [state]) // eslint-disable-line
   const badge = due.reviews.length + due.fresh.length
   const geom = state.win || {}
-  const style = geom.x != null && geom.y != null
-    ? { left: geom.x + 'px', top: geom.y + 'px' }
-    : null
+  const z = winScale(geom)
+  const style = {
+    ...(geom.x != null && geom.y != null ? { left: geom.x + 'px', top: geom.y + 'px' } : null),
+    transform: 'scale(' + z + ')',
+    transformOrigin: 'top left',
+    // In layout units the card may be taller than the screen once scaled, so
+    // the viewport cap has to be divided by the zoom factor.
+    maxHeight: 'min(calc(74vh / ' + z + '), 660px)',
+    '--cv-scale': String(z),
+  }
   return h('div', {
     className: 'cv-root' + ' ',
     children: undefined,
@@ -1770,6 +1856,12 @@ function VocabWindow() {
       tab === 'stats' ? h(StatsView, { state }) :
       h(SettingsView, { state }),
     ),
+    h('div', {
+      className: 'cv-resize',
+      title: t('resizeHint'),
+      onPointerDown: (e) => beginResize(e, geom),
+      onDoubleClick: () => store.setScale(1),
+    }, h('i', null)),
   ))
 }
 

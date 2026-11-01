@@ -47,6 +47,7 @@
   "bookBadge6": "CET-6",
   "bookBadgeBoth": "CET-4/6",
   "minimize": "Collapse",
+  "resizeHint": "Drag to resize · double-click to reset",
   "review": "Review",
   "newWord": "New",
   "noPhonetic": "—",
