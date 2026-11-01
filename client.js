@@ -812,8 +812,8 @@ function bookStats(state) {
 
 // ------------------------------------------------------------------- locale
 
-const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","settingsLearn":"学习","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","dailyPerDay":"{n} 词/天","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色","hintCard":"Space 显示释义 · 1/2/3 评分","scTitle":"快捷键","scToggle":"展开 / 收起悬浮窗","scModeCard":"切换到卡片模式","scModeQuiz":"切换到选择题模式","scSpeak":"朗读当前单词","scReveal":"显示释义","scGrade":"认识 / 模糊 / 不认识","scPick":"选择答案 1-4","scNote":"单键（Space、数字）只在窗口展开且光标不在输入框时生效；Alt 组合键在页面任何位置都能用。","scReview":"复习稍后到期的词（最多 20 个）","scExtra":"加练 10 个生词","scExit":"退出加练（加练中）","practiceNoReview":"暂时没有待复习的词","practiceNoExtra":"没有更多生词可以加练"}
-const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","settingsLearn":"Learning","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","dailyPerDay":"{n} / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark","hintCard":"Space reveal · 1/2/3 grade","scTitle":"Keyboard shortcuts","scToggle":"Expand / collapse the window","scModeCard":"Switch to card mode","scModeQuiz":"Switch to quiz mode","scSpeak":"Speak the current word","scReveal":"Reveal the meaning","scGrade":"Known / Fuzzy / Miss","scPick":"Pick an answer (1-4)","scNote":"Single keys (Space, digits) work only while the window is expanded and the caret is not in a text field; Alt combos work anywhere on the page.","scReview":"Review words due later (up to 20)","scExtra":"Practise 10 new words","scExit":"Exit practice (while practising)","practiceNoReview":"Nothing due for review yet","practiceNoExtra":"No more new words to practise"}
+const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","settingsLearn":"学习","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","dailyPerDay":"{n} 词/天","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","quizNext":"下一个","quizStay":"答错会停在这里，按 → 或点「下一个」继续","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色","hintCard":"Space 显示释义 · 1/2/3 评分","scTitle":"快捷键","scToggle":"展开 / 收起悬浮窗","scModeCard":"切换到卡片模式","scModeQuiz":"切换到选择题模式","scSpeak":"朗读当前单词","scReveal":"显示释义","scGrade":"认识 / 模糊 / 不认识","scPick":"选择答案 1-4","scNext":"下一个词（答完题后）","scNote":"单键（Space、数字）只在窗口展开且光标不在输入框时生效；Alt 组合键在页面任何位置都能用。","scReview":"复习稍后到期的词（最多 20 个）","scExtra":"加练 10 个生词","scExit":"退出加练（加练中）","practiceNoReview":"暂时没有待复习的词","practiceNoExtra":"没有更多生词可以加练"}
+const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","settingsLearn":"Learning","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","dailyPerDay":"{n} / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","quizNext":"Next","quizStay":"Wrong answers stay put — press → to continue","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark","hintCard":"Space reveal · 1/2/3 grade","scTitle":"Keyboard shortcuts","scToggle":"Expand / collapse the window","scModeCard":"Switch to card mode","scModeQuiz":"Switch to quiz mode","scSpeak":"Speak the current word","scReveal":"Reveal the meaning","scGrade":"Known / Fuzzy / Miss","scPick":"Pick an answer (1-4)","scNext":"Next word (after answering)","scNote":"Single keys (Space, digits) work only while the window is expanded and the caret is not in a text field; Alt combos work anywhere on the page.","scReview":"Review words due later (up to 20)","scExtra":"Practise 10 new words","scExit":"Exit practice (while practising)","practiceNoReview":"Nothing due for review yet","practiceNoExtra":"No more new words to practise"}
 
 let localeBinder = null
 const t = (key) => {
@@ -1054,6 +1054,14 @@ const CSS = `
   color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
 }
 .cv-actionbtn:hover { filter: brightness(1.06); }
+.cv-nextbtn {
+  display: block; width: 100%; margin-top: 10px; padding: 8px 0;
+  font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 38%, transparent);
+  background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 12%, transparent);
+  color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
+}
+.cv-nextbtn:hover { filter: brightness(1.06); }
 .cv-numinput {
   width: 76px; padding: 5px 8px; font-size: 13px; border-radius: 8px;
   border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1));
@@ -1123,10 +1131,11 @@ const SC = {
   reveal: { keys: ['Space'], key: 'scReveal' },
   grades: { keys: ['1', '2', '3'], key: 'scGrade' },
   pick: { keys: ['1', '2', '3', '4'], key: 'scPick' },
+  next: { keys: ['→'], key: 'scNext' },
 }
 // Display order of the settings guide. SC is the single source of truth, so
 // the guide can never advertise a key the code does not actually handle.
-const SC_GUIDE = ['toggle', 'card', 'quiz', 'review', 'extra', 'exit', 'speak', 'reveal', 'grades', 'pick']
+const SC_GUIDE = ['toggle', 'card', 'quiz', 'review', 'extra', 'exit', 'speak', 'reveal', 'grades', 'pick', 'next']
 
 // Would this key land in a text field? Without this guard Space would be
 // swallowed while the user types, and 1/2/3 would grade a card behind the
@@ -1354,11 +1363,24 @@ function QuizView({ card, isNew, state, onGrade }) {
   const answered = picked != null && opts[picked] != null
   const wasRight = answered && opts[picked].w === card.w
 
+  // One grade per card: the auto-advance timer and a → press can race, and
+  // grading twice would advance two words.
+  const advanced = React.useRef(false)
+  const advance = () => {
+    if (advanced.current) return
+    advanced.current = true
+    onGrade(wasRight ? GRADE_KNOW : GRADE_MISS)
+  }
+
   React.useEffect(() => {
     if (!answered) return
+    advanced.current = false
     // speak once the answer is revealed, same contract as card mode's reveal
     if (state.settings.autoSpeak) speak(card.w)
-    const id = window.setTimeout(() => onGrade(wasRight ? GRADE_KNOW : GRADE_MISS), 1200)
+    // A hit moves on by itself; a miss stays on screen so the right definition
+    // can actually be read, and waits for → (or the Next button).
+    if (!wasRight) return
+    const id = window.setTimeout(advance, 1200)
     return () => window.clearTimeout(id)
   }, [answered]) // eslint-disable-line
 
@@ -1366,7 +1388,11 @@ function QuizView({ card, isNew, state, onGrade }) {
     const onKey = (ev) => {
       if (ev.defaultPrevented || ev.isComposing) return
       if (isTypingTarget(ev) || !plainKey(ev)) return
-      if (answered || opts.length === 0) return
+      if (answered) {
+        if (ev.key === 'ArrowRight') { ev.preventDefault(); advance() }
+        return
+      }
+      if (opts.length === 0) return
       const n = parseInt(ev.key, 10)
       if (n >= 1 && n <= opts.length) { ev.preventDefault(); setPicked(n - 1) }
     }
@@ -1374,10 +1400,14 @@ function QuizView({ card, isNew, state, onGrade }) {
     return () => window.removeEventListener('keydown', onKey)
   })
 
-  const clip = (s, n) => {
-    s = String(s || '')
-    return s.length > (n || 46) ? s.slice(0, n || 46) + '…' : s
-  }
+  // A long definition list can push the verdict below the fold; bring it back
+  // into view so the answer is readable without hunting for it.
+  const fbRef = React.useRef(null)
+  React.useEffect(() => {
+    if (!answered) return
+    const el = fbRef.current
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
+  }, [answered])
 
   return h('div', null,
     h('div', { className: 'cv-card' },
@@ -1402,13 +1432,17 @@ function QuizView({ card, isNew, state, onGrade }) {
         return h('button', {
           key: o.w + ':' + i, className: cls,
           onClick: () => { if (!answered) setPicked(i) },
-        }, (i + 1) + '. ' + clip(o.t))
+        }, (i + 1) + '. ' + o.t)
       }),
     ),
     answered && h('div', {
+      ref: fbRef,
       className: 'cv-feedback ' + (wasRight ? 'cv-feedback--ok' : 'cv-feedback--no'),
     }, (wasRight ? '✓ ' + t('quizCorrect') : '✗ ' + t('quizWrong')) +
-      ' · ' + card.w + ' ' + clip(entry ? entry.t : '', 80)),
+      ' · ' + card.w + ' ' + (entry ? entry.t : '')),
+    answered && h('button', { className: 'cv-nextbtn', onClick: advance },
+      t('quizNext') + '  →'),
+    answered && !wasRight && h('div', { className: 'cv-hint' }, t('quizStay')),
     !answered && h('div', { className: 'cv-hint' }, t('optHint')),
   )
 }
