@@ -57,6 +57,23 @@ One command runs the whole chain: sync the three i18n places, bump the version, 
 
 Requirements: an authenticated `gh`, and an npm **granular access token with “Bypass 2FA” enabled** (npm requires 2FA, or such a token, to publish) supplied via `--token-file` or `NPM_TOKEN_FILE`. GitHub traffic uses the proxy from `--proxy` (default `http://127.0.0.1:7897`); npm is deliberately called without a proxy. The npm credential is written to a temporary userconfig and deleted afterwards — `~/.npmrc` is never touched. 需要已登录的 `gh`，以及开启 Bypass 2FA 的 npm granular token；GitHub 走代理、npm 不走代理，凭据只落在临时配置里且用完即删。
 
+## Changelog / 更新记录
+
+### 0.2.2
+
+- **Keyboard shortcuts / 快捷键** — `Alt+Q` shows or hides the window (works even while typing), `Alt+1` / `Alt+2` switch card vs. quiz, `Alt+R` review, `Alt+P` extra practice, `Alt+X` exit practice, `Alt+S` speak the word; `Space` flips, `1/2/3` grade, `1–4` answer, `→` moves to the next word. Bare keys stay inert while a text field has focus or the window is closed, and any key the host already handled is left alone. The full list is in Settings. 全套快捷键，设置页附键位指南。
+- **Leaner settings / 设置页瘦身** — the word book, daily quota and accent now live on a single 「学习」 sub-page; the separate 「自定义」 row is gone and its number box sits inline at the end of the daily-quota row. 词库/每日新词/发音口音收进「学习」二级页，自定义输入框并入每日新词行。
+- **Quiz fixes / 选择题修正** — options and the feedback line show the whole definition (the 46-character cut is gone), and a wrong answer now stays on screen instead of auto-advancing after 1.2 s: press `→` or the new 「下一个」 button to continue. 释义不再截断；答错会停留，按 → 或「下一个」继续。
+- **Resizable / 可缩放** — drag the corner grip to scale the entire window, text and spacing included, from 70% to 200%; double-click the grip to reset, and the size is remembered. 拖动右下角手柄整体缩放，双击复位，尺寸持久化。
+
+### 0.2.1
+
+Publishable npm package (dropped `private`, declared `engines.dsh`); `locale/*.json` aligned with the inline dictionaries.
+
+### 0.2.0
+
+Online human US/UK pronunciation fetched per word, with `speechSynthesis` as the offline fallback — no Windows voice pack or admin rights needed. 在线真人美式/英式发音，无需语音包与管理员权限。
+
 ## Data license / 词库来源
 
 The word list is extracted from [ECDICT](https://github.com/skywind3000/ECDICT) (MIT License, © skywind3000). Everything else is MIT — see [LICENSE](LICENSE).
