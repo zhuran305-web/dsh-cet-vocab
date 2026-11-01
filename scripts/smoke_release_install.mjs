@@ -123,8 +123,12 @@ const documentStub = {
   querySelector: () => null,
   addEventListener() {}, removeEventListener() {},
 }
+// window-level listeners are recorded so the keyboard wiring can be exercised
+const winListeners = { keydown: [] }
 const windowStub = {
   __ModuleLoader__: { load(mod) { captured = mod } },
+  addEventListener(type, fn) { (winListeners[type] = winListeners[type] || []).push(fn) },
+  removeEventListener(type, fn) { winListeners[type] = (winListeners[type] || []).filter((f) => f !== fn) },
   matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }),
   localStorage: (() => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) } })(),
   speechSynthesis: { getVoices: () => [], speak() {}, cancel() {}, addEventListener() {}, removeEventListener() {} },
@@ -143,7 +147,7 @@ sandbox.globalThis = sandbox
 const ctxVm = vm.createContext(sandbox)
 const instrumented = clientCode.replace(
   /\nreturn module\.exports;\n\} \}\);\s*$/,
-  '\nglobalThis.__CET_WORDS__ = typeof CET_WORDS !== "undefined" ? CET_WORDS : null;\nglobalThis.__ZH__ = typeof ZH !== "undefined" ? ZH : null;\nreturn module.exports;\n} });\n',
+  '\nglobalThis.__CET_WORDS__ = typeof CET_WORDS !== "undefined" ? CET_WORDS : null;\nglobalThis.__ZH__ = typeof ZH !== "undefined" ? ZH : null;\nglobalThis.__STORE__ = typeof store !== "undefined" ? store : null;\nreturn module.exports;\n} });\n',
 )
 ok(instrumented !== clientCode, '已插桩取出内嵌词库')
 vm.runInContext(instrumented, ctxVm, { filename: 'client.js' })
@@ -208,6 +212,84 @@ if (onlyClient.length) console.log(`  info 仅客户端有: ${onlyClient.join(',
 if (onlyFile.length) console.log(`  info 仅 locale 文件有: ${onlyFile.join(', ')}`)
 ok(onlyClient.length === 0 && onlyFile.length === 0, '客户端内联字典与 locale/zh.json（除 meta）键集一致',
   `仅客户端 ${onlyClient.length} / 仅文件 ${onlyFile.length}`)
+
+// ------------------------------------------------- 快捷键注册与行为（全局监听）
+const keyEv = (key, opts = {}) => ({
+  key, code: opts.code || '', altKey: true, ctrlKey: false, metaKey: false, shiftKey: false,
+  isComposing: false, defaultPrevented: false, target: opts.target || null,
+  preventDefault() { this.defaultPrevented = true },
+})
+const onKey = winListeners.keydown[0]
+if (ok(winListeners.keydown.length === 1 && typeof onKey === 'function',
+  '注册了 1 个全局 keydown 监听（其余交给窗口内 handler）', String(winListeners.keydown.length))) {
+  const st = ctxVm.__STORE__
+  ok(Boolean(st), '可取 store（插桩暴露）')
+  const modeNow = () => st.get().settings.mode
+  const collapsed = () => Boolean(st.get().win && st.get().win.min)
+
+  // Alt+Q 收起 → 再按展开
+  onKey(keyEv('q', { code: 'KeyQ' }))
+  const afterCollapse = collapsed()
+  onKey(keyEv('q', { code: 'KeyQ' }))
+  ok(afterCollapse && !collapsed(), 'Alt+Q 收起后再展开悬浮窗', `collapse=${afterCollapse} → expand=${!collapsed()}`)
+
+  // 输入框内 Alt+1 不得切模式（用户要求的“避免误触”）
+  onKey(keyEv('2', { code: 'Digit2' }))
+  const quiz = modeNow()
+  const typing = { nodeType: 1, tagName: 'TEXTAREA', isContentEditable: false, closest: () => null }
+  onKey(keyEv('1', { code: 'Digit1', target: typing }))
+  ok(quiz === 'quiz' && modeNow() === 'quiz', 'Alt+1 在输入框内不切模式（防误触）', `mode=${modeNow()}`)
+
+  onKey(keyEv('1', { code: 'Digit1' }))
+  ok(modeNow() === 'card', 'Alt+2 → 选择题、Alt+1 → 卡片模式', `quiz=${quiz} → card=${modeNow()}`)
+
+  // 折叠状态下 Alt+1/2/S 不生效
+  onKey(keyEv('q', { code: 'KeyQ' }))
+  onKey(keyEv('2', { code: 'Digit2' }))
+  ok(modeNow() === 'card', '窗口收起时模式快捷键不生效', `mode=${modeNow()}`)
+  onKey(keyEv('q', { code: 'KeyQ' }))
+
+  let speakThrew = null
+  try { onKey(keyEv('s', { code: 'KeyS' })) } catch (e) { speakThrew = e }
+  ok(!speakThrew, 'Alt+S 朗读当前词不抛异常', speakThrew ? String(speakThrew.message) : '')
+
+  // 复习 / 加练 / 退出（Alt+R / Alt+P / Alt+X）
+  onKey(keyEv('p', { code: 'KeyP' }))
+  const practice = st.get().practice
+  ok(practice && practice.kind === 'extra' && practice.words.length === 10,
+    'Alt+P 开始加练（10 个生词）', practice ? `${practice.kind} ${practice.words.length} 词` : 'null')
+
+  st.set((s) => { if (s.practice) s.practice = { ...s.practice, i: 3 } })
+  onKey(keyEv('p', { code: 'KeyP' }))
+  ok(st.get().practice && st.get().practice.i === 3, '加练中再按 Alt+P 不重开，不清进度',
+    `i=${st.get().practice ? st.get().practice.i : 'null'}`)
+
+  onKey(keyEv('x', { code: 'KeyX' }))
+  ok(st.get().practice === null, 'Alt+X 退出加练')
+
+  // 把整本词库标成「稍后到期」，Alt+R 应取到期最靠前的词进复习
+  st.set((s) => {
+    const soon = Date.now() + 3600 * 1000
+    for (const e of (ctxVm.__CET_WORDS__?.words || [])) s.words[e.w] = { box: 1, due: soon, seen: 1 }
+  })
+  onKey(keyEv('r', { code: 'KeyR' }))
+  const rev = st.get().practice
+  ok(rev && rev.kind === 'review' && rev.words.length > 0,
+    'Alt+R 复习稍后到期的词', rev ? `${rev.kind} ${rev.words.length} 词` : 'null')
+  onKey(keyEv('x', { code: 'KeyX' }))
+
+  // 没有待复习的词 → 不报错、不改状态（只弹一行提示）
+  st.set((s) => { s.words = {} })
+  onKey(keyEv('r', { code: 'KeyR' }))
+  ok(st.get().practice === null, '无可复习词时 Alt+R 不动作（改弹提示）', 'practice=null')
+
+  // 裸按键（无 Alt）不由全局监听处理 —— 保留给窗口内的 Space / 1-4
+  const bare = keyEv('1')
+  bare.altKey = false
+  const beforeBare = modeNow()
+  onKey(bare)
+  ok(modeNow() === beforeBare, '裸按键不被全局监听接管（留给窗口内 handler）', `mode=${modeNow()}`)
+}
 
 // ------------------------------------------------------------------ 汇总
 console.log(notes.join('\n'))
