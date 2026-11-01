@@ -1,8 +1,7 @@
 {
   "name": "dsh-cet-vocab",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "背单词（四六级）：shell.overlay 悬浮词卡，可拖动、可最小化；三键评分（认识/模糊/不认识）+ 艾宾浩斯间隔复习；美式/英式真人发音（在线音频，无需系统语音包）；词库 5805 词（四级 3849 / 六级 5407），内嵌自 ECDICT（MIT）。随时点开背单词。",
-  "private": true,
   "type": "module",
   "license": "MIT",
   "author": "zhuran305-web",
@@ -11,7 +10,8 @@
     "url": "https://github.com/zhuran305-web/dsh-cet-vocab.git"
   },
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.19.0",
+    "dsh": ">=0.2.0-rc.2"
   },
   "files": [
     "index.js",

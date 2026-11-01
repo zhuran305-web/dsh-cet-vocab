@@ -24,7 +24,8 @@ Progress is stored in `localStorage` (per browser profile). 进度存于浏览�
 From any DSH plugin marketplace that mirrors the [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) catalog (e.g. dshmarket, dsh-plugin-mall), or directly / 或直接：
 
 ```sh
-dsh plugin add dsh-cet-vocab
+dsh plugin add dsh-cet-vocab                      # from npm
+dsh plugin add "https://github.com/zhuran305-web/dsh-cet-vocab/releases/latest/download/dsh-cet-vocab.tgz"   # from GitHub Releases
 ```
 
 The package ships prebuilt `client.js` — no build step, no telemetry. Pronunciation streams one small mp3 per word from Youdao's dictionary audio on demand (cached by the browser); everything else works offline. 包内自带构建好的 client.js，无构建步骤、无遥测。发音按需流式加载有道词典音频（浏览器自带缓存），其余功能完全离线。
