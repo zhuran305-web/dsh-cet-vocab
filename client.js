@@ -652,6 +652,14 @@ const store = {
     store.emit()
   },
   minimize(min) { store.set((s) => { s.win = { ...s.win, min } }) },
+  // Alt+Q: expand when hidden or collapsed, collapse to the pill when expanded.
+  toggleWindow() {
+    store.set((s) => {
+      const hidden = s.open === false || (s.win && s.win.min)
+      s.open = true
+      s.win = { ...s.win, min: !hidden }
+    })
+  },
   setGeom(x, y) { store.set((s) => { s.win = { ...s.win, x, y } }) },
   setSettings(patch) {
     store.set((s) => { s.settings = { ...s.settings, ...patch } })
@@ -773,6 +781,21 @@ function buildQueue(state, now) {
   return { reviews, fresh, dueLaterCount }
 }
 
+// The card the learner is looking at right now. LearnView hands over its
+// memoised queue so nothing is built twice; the Alt+S shortcut calls it with
+// just the state, which is what makes it speak the word actually on screen.
+function pickCard(state, now, queue) {
+  const practice = state.practice || null
+  if (practice) {
+    const w = practice.words[practice.i]
+    const e = w ? BOOK_INDEX.entry(w) : null
+    return { card: e || null, isNew: e ? !state.words[w] : false }
+  }
+  const q = queue || buildQueue(state, now)
+  const card = q.reviews[0] || q.fresh[0] || null
+  return { card, isNew: card ? !state.words[card.w] : false }
+}
+
 function bookStats(state) {
   const list = visibleWords(state.settings.book)
   let seen = 0, learning = 0, graduated = 0
@@ -789,8 +812,8 @@ function bookStats(state) {
 
 // ------------------------------------------------------------------- locale
 
-const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","settingsCustom":"自定义","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色"}
-const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","settingsCustom":"Custom","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark"}
+const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","settingsLearn":"学习","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","dailyPerDay":"{n} 词/天","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色","hintCard":"Space 显示释义 · 1/2/3 评分","scTitle":"快捷键","scToggle":"展开 / 收起悬浮窗","scModeCard":"切换到卡片模式","scModeQuiz":"切换到选择题模式","scSpeak":"朗读当前单词","scReveal":"显示释义","scGrade":"认识 / 模糊 / 不认识","scPick":"选择答案 1-4","scNote":"单键（Space、数字）只在窗口展开且光标不在输入框时生效；Alt 组合键在页面任何位置都能用。","scReview":"复习稍后到期的词（最多 20 个）","scExtra":"加练 10 个生词","scExit":"退出加练（加练中）","practiceNoReview":"暂时没有待复习的词","practiceNoExtra":"没有更多生词可以加练"}
+const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","settingsLearn":"Learning","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","dailyPerDay":"{n} / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark","hintCard":"Space reveal · 1/2/3 grade","scTitle":"Keyboard shortcuts","scToggle":"Expand / collapse the window","scModeCard":"Switch to card mode","scModeQuiz":"Switch to quiz mode","scSpeak":"Speak the current word","scReveal":"Reveal the meaning","scGrade":"Known / Fuzzy / Miss","scPick":"Pick an answer (1-4)","scNote":"Single keys (Space, digits) work only while the window is expanded and the caret is not in a text field; Alt combos work anywhere on the page.","scReview":"Review words due later (up to 20)","scExtra":"Practise 10 new words","scExit":"Exit practice (while practising)","practiceNoReview":"Nothing due for review yet","practiceNoExtra":"No more new words to practise"}
 
 let localeBinder = null
 const t = (key) => {
@@ -916,6 +939,31 @@ const CSS = `
 .cv-set-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); }
 .cv-set-row:last-of-type { border-bottom: none; }
 .cv-set-label { font-size: 13px; width: 92px; flex: none; color: var(--cv-text, var(--dsw-alias-label-primary)); }
+.cv-set-entry {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 0;
+  border: none; border-bottom: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
+  background: transparent; color: var(--cv-text, var(--dsw-alias-label-primary));
+  font: inherit; font-size: 13px; cursor: pointer; text-align: left;
+}
+.cv-set-entry:hover .cv-set-label { color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); }
+.cv-set-value {
+  margin-left: auto; font-size: 11.5px; text-align: right;
+  color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
+}
+.cv-set-chevron { flex: none; font-size: 15px; line-height: 1; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
+.cv-sub-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
+}
+.cv-set-back {
+  border: none; background: transparent; padding: 2px 6px 2px 0; font: inherit; font-size: 12.5px;
+  cursor: pointer; color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
+}
+.cv-set-back:hover { filter: brightness(1.12); }
+.cv-sub-title { font-size: 12.5px; font-weight: 600; color: var(--cv-text, var(--dsw-alias-label-primary)); }
+.cv-set-row .cv-numinput--inline { width: 62px; flex: none; }
+.cv-sc-flat { padding-top: 8px; }
+
 .cv-seg { display: flex; flex: 1; gap: 4px; background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); border-radius: 9px; padding: 3px; }
 .cv-seg button {
   flex: 1; border: none; background: transparent; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
@@ -934,6 +982,17 @@ const CSS = `
 }
 .cv-switch--on { background: var(--cv-accent, var(--dsw-alias-brand-primary)); }
 .cv-switch--on > i { left: 21px; }
+.cv-sc { margin-top: 14px; padding-top: 11px; border-top: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); }
+.cv-sc-title { font-size: 12.5px; font-weight: 600; color: var(--cv-text, var(--dsw-alias-label-primary)); margin-bottom: 8px; }
+.cv-sc-row { display: flex; align-items: center; gap: 9px; padding: 3px 0; }
+.cv-sc-keys { display: flex; gap: 3px; flex: none; width: 96px; }
+.cv-sc-keys kbd {
+  font: inherit; font-size: 10.5px; line-height: 1; padding: 4px 6px; border-radius: 6px;
+  background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); color: var(--cv-text, var(--dsw-alias-label-primary));
+  border: 1px solid var(--cv-border-2, var(--dsw-alias-border-l1)); box-shadow: 0 1px 0 rgba(0,0,0,.2);
+}
+.cv-sc-desc { font-size: 11.5px; line-height: 1.35; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
+.cv-sc-note { margin-top: 7px; font-size: 10.5px; line-height: 1.4; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
 .cv-resetbtn {
   width: 100%; margin-top: 12px; padding: 8px 0; font-size: 13px; cursor: pointer; border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 40%, transparent);
@@ -1032,7 +1091,88 @@ const CSS = `
   font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
 }
 .cv-hint { font-size: 11.5px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); text-align: center; margin-top: 10px; }
+.cv-flash {
+  margin-top: 10px; padding: 6px 10px; border-radius: 8px; text-align: center; font-size: 11.5px;
+  background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
+}
 `
+
+// --------------------------------------------------------------- shortcuts
+//
+// Key choices, and why the conflicts stay away:
+//   * Anything that acts outside the window uses Alt. Ctrl/Cmd combos belong
+//     to the browser and the host shell (Ctrl+1..8 switches tabs, Ctrl+S saves,
+//     Ctrl+W closes the tab, Ctrl+K opens the host's pickers), so we never go
+//     near them; Alt+letter/digit is free in both Chromium and the DSH shell.
+//   * Plain keys (Space, 1-4) act only while the window is expanded *and* no
+//     text field has focus, so typing a prompt is never disturbed (this fixed
+//     a real bug: Space used to reveal a card while typing in the chat box).
+//   * Every handler first checks `defaultPrevented`/`isComposing` and simply
+//     yields, so a shortcut the host already claimed always wins. We listen on
+//     `window` in the bubble phase, after the shell's own listeners.
+//   * AltGr arrives as ctrl+alt on Windows layouts, so requiring altKey *and*
+//     no ctrlKey keeps AltGr typing (e.g. Polish/German characters) working.
+const SC = {
+  toggle: { keys: ['Alt', 'Q'], key: 'scToggle' },
+  card: { keys: ['Alt', '1'], key: 'scModeCard' },
+  quiz: { keys: ['Alt', '2'], key: 'scModeQuiz' },
+  review: { keys: ['Alt', 'R'], key: 'scReview' },
+  extra: { keys: ['Alt', 'P'], key: 'scExtra' },
+  exit: { keys: ['Alt', 'X'], key: 'scExit' },
+  speak: { keys: ['Alt', 'S'], key: 'scSpeak' },
+  reveal: { keys: ['Space'], key: 'scReveal' },
+  grades: { keys: ['1', '2', '3'], key: 'scGrade' },
+  pick: { keys: ['1', '2', '3', '4'], key: 'scPick' },
+}
+// Display order of the settings guide. SC is the single source of truth, so
+// the guide can never advertise a key the code does not actually handle.
+const SC_GUIDE = ['toggle', 'card', 'quiz', 'review', 'extra', 'exit', 'speak', 'reveal', 'grades', 'pick']
+
+// Would this key land in a text field? Without this guard Space would be
+// swallowed while the user types, and 1/2/3 would grade a card behind the
+// caret. Covers nested contenteditable hosts (DSH's composer is one).
+function isTypingTarget(ev) {
+  const el = ev && ev.target
+  if (!el || el.nodeType !== 1) return false
+  const tag = String(el.tagName || '').toLowerCase()
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+  if (el.isContentEditable) return true
+  return !!(el.closest && el.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'))
+}
+
+// A bare key: no Alt/Ctrl/Cmd. Used by the in-window Space and 1-4 handlers.
+function plainKey(ev) {
+  return !ev.altKey && !ev.ctrlKey && !ev.metaKey
+}
+
+// `ev.key` depends on the active layout/IME, `ev.code` on the physical key;
+// prefer the physical one so Alt+Q and Alt+1 keep working on any layout.
+function scKey(ev) {
+  const code = String((ev && ev.code) || '')
+  if (code.startsWith('Key')) return code.slice(3).toLowerCase()
+  if (code.startsWith('Digit')) return code.slice(5)
+  return String((ev && ev.key) || '').toLowerCase()
+}
+
+// One-line feedback for a shortcut that had nothing to do ("no words to review
+// yet"). Deliberately not part of the persisted store: it must never survive a
+// reload, and it must not dirty the saved progress.
+const flashBox = { key: '', n: 0 }
+const flashSubs = new Set()
+function flash(key) {
+  flashBox.key = key
+  flashBox.n += 1
+  for (const fn of flashSubs) fn()
+}
+function useFlash() {
+  const [n, setN] = React.useState(flashBox.n)
+  React.useEffect(() => {
+    const fn = () => setN(flashBox.n)
+    flashSubs.add(fn)
+    return () => { flashSubs.delete(fn) }
+  }, [])
+  return n
+}
 
 // --------------------------------------------------------------- components
 
@@ -1162,7 +1302,7 @@ function CardView({ card, isNew, showing, onReveal, onGrade }) {
           h('button', { className: 'cv-grade cv-grade--fuzzy', onClick: () => onGrade(GRADE_FUZZY) }, t('fuzzy')),
           h('button', { className: 'cv-grade cv-grade--miss', onClick: () => onGrade(GRADE_MISS) }, t('unknown')),
         )
-      : h('div', { className: 'cv-hint' }, 'Space 显示释义 · 1/2/3 评分'),
+      : h('div', { className: 'cv-hint' }, t('hintCard')),
   )
 }
 
@@ -1224,7 +1364,8 @@ function QuizView({ card, isNew, state, onGrade }) {
 
   React.useEffect(() => {
     const onKey = (ev) => {
-      if (ev.target && /^(input|textarea|select)$/i.test(ev.target.tagName || '')) return
+      if (ev.defaultPrevented || ev.isComposing) return
+      if (isTypingTarget(ev) || !plainKey(ev)) return
       if (answered || opts.length === 0) return
       const n = parseInt(ev.key, 10)
       if (n >= 1 && n <= opts.length) { ev.preventDefault(); setPicked(n - 1) }
@@ -1311,17 +1452,20 @@ function LearnView({ state }) {
   const now = Date.now()
   const q = React.useMemo(() => buildQueue(state, now), [state, tick]) // eslint-disable-line
 
-  let card = null
-  let isNew = false
-  if (practice) {
-    const w = practice.words[practice.i]
-    const e = w ? BOOK_INDEX.entry(w) : null
-    if (e) { card = e; isNew = !state.words[w] }
-  } else {
-    card = q.reviews[0] || q.fresh[0] || null
-    isNew = card ? !state.words[card.w] : false
-  }
+  // Same selection the Alt+S shortcut uses (pickCard), so the spoken word is
+  // always the word on the card.
+  const { card, isNew } = pickCard(state, now, q)
   const showing = card ? revealed === card.w : false
+
+  // Shortcut feedback line (e.g. Alt+R with nothing due yet).
+  const flashN = useFlash()
+  const [flashMsg, setFlashMsg] = React.useState('')
+  React.useEffect(() => {
+    if (!flashN) return undefined
+    setFlashMsg(flashBox.key)
+    const id = setTimeout(() => setFlashMsg(''), 2400)
+    return () => clearTimeout(id)
+  }, [flashN])
 
   function doReveal() {
     if (!card) return
@@ -1336,7 +1480,8 @@ function LearnView({ state }) {
 
   React.useEffect(() => {
     const onKey = (ev) => {
-      if (ev.target && /^(input|textarea|select)$/i.test(ev.target.tagName || '')) return
+      if (ev.defaultPrevented || ev.isComposing) return
+      if (isTypingTarget(ev) || !plainKey(ev)) return
       if (!card || mode !== 'card') return
       if ((ev.key === ' ' || ev.key === 'Enter') && !showing) { ev.preventDefault(); doReveal() }
       else if (showing && (ev.key === '1' || ev.key === '2' || ev.key === '3')) {
@@ -1352,6 +1497,7 @@ function LearnView({ state }) {
     return h('div', null,
       !practice && h(ModeRow, { mode }),
       h(DoneView, { q, state }),
+      flashMsg && h('div', { className: 'cv-flash' }, t(flashMsg)),
     )
   }
 
@@ -1361,6 +1507,7 @@ function LearnView({ state }) {
     mode === 'card'
       ? h(CardView, { card, isNew, showing, onReveal: doReveal, onGrade: gradeCard })
       : h(QuizView, { card, isNew, state, onGrade: gradeCard }),
+    flashMsg && h('div', { className: 'cv-flash' }, t(flashMsg)),
   )
 }
 
@@ -1402,6 +1549,7 @@ function StatsView({ state }) {
 
 function SettingsView({ state }) {
   const [armed, setArmed] = React.useState(false)
+  const [panel, setPanel] = React.useState('')
   const [voices, setVoices] = React.useState(() => refreshVoices().slice())
   // Chromium populates the voice list late; re-read on the event and once after
   // mount so the picker is never permanently empty.
@@ -1434,7 +1582,15 @@ function SettingsView({ state }) {
     options.map((o) => h('button', {
       key: o.v, className: value === o.v ? 'cv-on' : '', onClick: () => onPick(o.v),
     }, o.label)))
-  return h('div', null,
+  const bookLabel = state.settings.book === 'cet6' ? t('cet6')
+    : state.settings.book === 'all' ? t('all') : t('cet4')
+  const accentLabel = ({ auto: t('accentAuto'), us: t('accentUS'), uk: t('accentUK') })[state.settings.accent || 'auto'] || t('accentAuto')
+  const subHead = (title) => h('div', { className: 'cv-sub-head' },
+    h('button', { className: 'cv-set-back', onClick: () => setPanel('') }, '‹ ' + t('tabSettings')),
+    h('span', { className: 'cv-sub-title' }, title),
+  )
+  const learnPage = h('div', null,
+    subHead(t('settingsLearn')),
     h('div', { className: 'cv-set-row' },
       h('span', { className: 'cv-set-label' }, t('settingsBook')),
       seg(state.settings.book, [
@@ -1444,36 +1600,19 @@ function SettingsView({ state }) {
       ], (v) => store.setSettings({ book: v })),
     ),
     h('div', { className: 'cv-set-row' },
-      h('span', { className: 'cv-set-label' }, t('settingsAppearance')),
-      seg(state.settings.appearance || 'auto', [
-        { v: 'auto', label: t('appearanceAuto') },
-        { v: 'dark', label: t('appearanceDark') },
-      ], (v) => store.setSettings({ appearance: v })),
-    ),
-    h('div', { className: 'cv-set-row' },
       h('span', { className: 'cv-set-label' }, t('settingsDaily')),
       seg(state.settings.dailyNew, [
         { v: 5, label: '5' }, { v: 10, label: '10' }, { v: 15, label: '15' }, { v: 20, label: '20' },
       ], (v) => store.setSettings({ dailyNew: v })),
-    ),
-    h('div', { className: 'cv-set-row' },
-      h('span', { className: 'cv-set-label' }, t('settingsCustom')),
       h('input', {
-        className: 'cv-numinput', type: 'number', min: 0, max: 500,
+        className: 'cv-numinput cv-numinput--inline', type: 'number', min: 0, max: 500,
+        title: t('settingsDaily'), 'aria-label': t('settingsDaily'),
         value: String(state.settings.dailyNew),
         onChange: (e) => {
           const v = parseInt(e.target.value, 10)
           if (!isNaN(v)) store.setSettings({ dailyNew: clamp(v, 0, 500) })
         },
       }),
-    ),
-    h('div', { className: 'cv-set-row' },
-      h('span', { className: 'cv-set-label' }, t('settingsSpeak')),
-      h('button', {
-        role: 'switch', 'aria-checked': !!state.settings.autoSpeak,
-        className: 'cv-switch' + (state.settings.autoSpeak ? ' cv-switch--on' : ''),
-        onClick: () => store.setSettings({ autoSpeak: !state.settings.autoSpeak }),
-      }, h('i', null)),
     ),
     h('div', { className: 'cv-set-row' },
       h('span', { className: 'cv-set-label' }, t('settingsVoice')),
@@ -1499,6 +1638,41 @@ function SettingsView({ state }) {
         onClick: () => { VOICE_WARMED = false; refreshVoices(); setVoices(refreshVoices().slice()); warmUpVoices() },
       }, '↻ ' + t('voiceRetry')),
     ),
+  )
+  const keysPage = h('div', null,
+    subHead(t('scTitle')),
+    h('div', { className: 'cv-sc-flat' },
+      SC_GUIDE.map((id) => h('div', { className: 'cv-sc-row', key: id },
+        h('span', { className: 'cv-sc-keys' }, SC[id].keys.map((k, i) => h('kbd', { key: k + i }, k))),
+        h('span', { className: 'cv-sc-desc' }, t(SC[id].key)),
+      )),
+      h('div', { className: 'cv-sc-note' }, t('scNote')),
+    ),
+  )
+  if (panel === 'learn') return learnPage
+  if (panel === 'keys') return keysPage
+  return h('div', null,
+    h('button', { className: 'cv-set-entry', onClick: () => setPanel('learn') },
+      h('span', { className: 'cv-set-label' }, t('settingsLearn')),
+      h('span', { className: 'cv-set-value' },
+        bookLabel + ' · ' + fmtT(t('dailyPerDay'), { n: state.settings.dailyNew }) + ' · ' + accentLabel),
+      h('span', { className: 'cv-set-chevron' }, '›'),
+    ),
+    h('div', { className: 'cv-set-row' },
+      h('span', { className: 'cv-set-label' }, t('settingsAppearance')),
+      seg(state.settings.appearance || 'auto', [
+        { v: 'auto', label: t('appearanceAuto') },
+        { v: 'dark', label: t('appearanceDark') },
+      ], (v) => store.setSettings({ appearance: v })),
+    ),
+    h('div', { className: 'cv-set-row' },
+      h('span', { className: 'cv-set-label' }, t('settingsSpeak')),
+      h('button', {
+        role: 'switch', 'aria-checked': !!state.settings.autoSpeak,
+        className: 'cv-switch' + (state.settings.autoSpeak ? ' cv-switch--on' : ''),
+        onClick: () => store.setSettings({ autoSpeak: !state.settings.autoSpeak }),
+      }, h('i', null)),
+    ),
     h('div', { className: 'cv-set-row' },
       h('span', { className: 'cv-set-label' }, t('settingsAutoOpen')),
       h('button', {
@@ -1506,6 +1680,10 @@ function SettingsView({ state }) {
         className: 'cv-switch' + (state.settings.autoOpen !== false ? ' cv-switch--on' : ''),
         onClick: () => store.setSettings({ autoOpen: !(state.settings.autoOpen !== false) }),
       }, h('i', null)),
+    ),
+    h('button', { className: 'cv-set-entry', onClick: () => setPanel('keys') },
+      h('span', { className: 'cv-set-label' }, '⌨️ ' + t('scTitle')),
+      h('span', { className: 'cv-set-chevron' }, '›'),
     ),
     h('button', {
       className: 'cv-resetbtn',
@@ -1631,6 +1809,60 @@ exports.apply = function apply(ctx) {
       { name: 'shell.overlay', id: 'cet-vocab', order: 45, label: () => t('title') },
       VocabApp,
     ),
+  )
+
+  // Keyboard shortcuts (key table and rationale: see the `SC` block above).
+  // Additive by design — a key the host or the page already handled is left
+  // untouched, so this can never break typing or a shell shortcut.
+  ctx.effect(
+    () => {
+      const onKey = (ev) => {
+        if (ev.defaultPrevented || ev.isComposing) return
+        if (!ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return // Alt-only
+        const k = scKey(ev)
+        if (k === 'q') {
+          ev.preventDefault()
+          store.toggleWindow()
+          return
+        }
+        // Everything below needs the window on screen and the caret elsewhere
+        // — Alt+Q is deliberately the one key that also works while typing,
+        // because it is the only way back to a collapsed window.
+        if (isTypingTarget(ev)) return
+        const s = store.get()
+        if (s.open === false || (s.win && s.win.min)) return
+        if (k === 'r' || k === 'p') {
+          // A session already under way is left alone (no accidental restart).
+          // When the store has nothing to pick it stays a no-op, so say why
+          // rather than looking broken.
+          const kind = k === 'r' ? 'review' : 'extra'
+          const cur = store.get().practice
+          if (!(cur && cur.kind === kind)) {
+            ev.preventDefault()
+            store.startPractice(kind)
+            const after = store.get().practice
+            if (!(after && after.kind === kind)) flash(kind === 'review' ? 'practiceNoReview' : 'practiceNoExtra')
+          }
+        } else if (k === 'x') {
+          if (store.get().practice) {
+            ev.preventDefault()
+            store.endPractice()
+          }
+        } else if (k === '1' || k === '2') {
+          ev.preventDefault()
+          store.setSettings({ mode: k === '1' ? 'card' : 'quiz' })
+        } else if (k === 's') {
+          const picked = pickCard(s, Date.now())
+          if (picked.card) {
+            ev.preventDefault()
+            speak(picked.card.w)
+          }
+        }
+      }
+      window.addEventListener('keydown', onKey)
+      return () => window.removeEventListener('keydown', onKey)
+    },
+    'dsh-cet-vocab: keyboard shortcuts',
   )
 
   // Accent contrast probe: re-derive --cv-accent* whenever the theme can
