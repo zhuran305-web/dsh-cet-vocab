@@ -88,5 +88,21 @@
   "scExtra": "Practise 10 new words",
   "scExit": "Exit practice (while practising)",
   "practiceNoReview": "Nothing due for review yet",
-  "practiceNoExtra": "No more new words to practise"
+  "practiceNoExtra": "No more new words to practise",
+  "readModeLabel": "Read aloud",
+  "readModeW": "Word only",
+  "readModeWT": "Word + meaning",
+  "readModeWTW": "Word → meaning → word",
+  "readRangeLabel": "Range",
+  "readRangeToday": "Today",
+  "readRangeYd": "Today & yesterday",
+  "readRangeNew": "Newly learned",
+  "readRangeD3": "Last 3 days",
+  "readRangeD7": "Last 7 days",
+  "readRangeAll": "All learned",
+  "readerOn": "Stop loop reading",
+  "readerOff": "Loop-read words",
+  "readEmpty": "No learned words yet — learn a few first",
+  "settingsReadExample": "Read example sentences",
+  "readExampleHint": "Some words have no examples yet — skipped automatically"
 }

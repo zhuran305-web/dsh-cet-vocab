@@ -88,5 +88,21 @@
   "scExtra": "加练 10 个生词",
   "scExit": "退出加练（加练中）",
   "practiceNoReview": "暂时没有待复习的词",
-  "practiceNoExtra": "没有更多生词可以加练"
+  "practiceNoExtra": "没有更多生词可以加练",
+  "readModeLabel": "朗读内容",
+  "readModeW": "只读单词",
+  "readModeWT": "词 + 翻译",
+  "readModeWTW": "词→译→词",
+  "readRangeLabel": "朗读范围",
+  "readRangeToday": "今天",
+  "readRangeYd": "今天和昨天",
+  "readRangeNew": "新学词（昨天起）",
+  "readRangeD3": "最近 3 天",
+  "readRangeD7": "最近 7 天",
+  "readRangeAll": "全部已学",
+  "readerOn": "停止循环朗读",
+  "readerOff": "循环朗读单词",
+  "readEmpty": "还没有已学的词，先学几个再听",
+  "settingsReadExample": "朗读例句",
+  "readExampleHint": "部分单词暂无例句，将自动跳过"
 }

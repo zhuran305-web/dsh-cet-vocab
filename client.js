@@ -188,6 +188,7 @@ function speakTTS(word, accent) {
  * `accentOverride` lets the settings page preview an accent before saving.
  */
 function speak(word, accentOverride) {
+  readerKick() // a manual word takes the channel; the ambient loop steps aside
   const accent = resolveAccent(accentOverride || savedAccent())
   try { if (window.speechSynthesis) window.speechSynthesis.cancel() } catch (e) {}
   stopAudio()
@@ -217,6 +218,452 @@ function speak(word, accentOverride) {
   el.addEventListener('playing', done, { once: true })
   el.addEventListener('error', fallbackOnce, { once: true })
   el.play().catch(fallbackOnce)
+}
+
+// --------------------------------------------------- ambient reader (loop)
+//
+// A persistent "listen to your words" mode, independent of the window: a
+// small round toggle rides next to the pill / window anchor, and the loop
+// keeps reading the chosen range (today / recent days / everything learned)
+// word by word — word only, word + meaning, or word → meaning → word again.
+// Manual playback (🔊 buttons, Alt+S, auto-speak) always wins: speak() kicks
+// the loop, which quietly restarts a few seconds after the last manual word.
+
+const READ_RANGE_DAYS = { today: 1, d2: 2, d3: 3, d7: 7, all: 0 }
+const READ_MODES = { w: true, wt: true, wtw: true }
+
+function readRangeDays(r) {
+  const n = READ_RANGE_DAYS[r]
+  return n == null ? 2 : n
+}
+
+function dayStart() {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+
+/** Learned entries inside the configured range, newest-studied first.
+ *  'new' is the exception: only words FIRST learned within the window
+ *  (words[].first), so pure reviews never sneak into the new-word loop. */
+function readerQueue(state) {
+  const book = visibleWords(state.settings.book)
+  const out = []
+  if (state.settings.readRange === 'new') {
+    const from = dayStart() - 86400000 // yesterday 00:00 local
+    for (const e of book) {
+      const st = state.words[e.w]
+      if (st && st.first >= from) out.push(e)
+    }
+    out.sort((a, b) => (state.words[b.w].first || 0) - (state.words[a.w].first || 0))
+    return out
+  }
+  const days = readRangeDays(state.settings.readRange)
+  const from = days > 0 ? dayStart() - (days - 1) * 86400000 : 0
+  for (const e of book) {
+    const st = state.words[e.w]
+    if (!st) continue
+    if (from && !(st.last >= from)) continue // 'all' also admits pre-`last` words
+    out.push(e)
+  }
+  out.sort((a, b) => (state.words[b.w].last || 0) - (state.words[a.w].last || 0))
+  return out
+}
+
+const READER = {
+  on: false,
+  token: 0, // bumped on stop/kick; in-flight awaits check it and bail
+  seq: [],
+  idx: 0,
+  roundLeft: 0, // words still owed in the CURRENT round; a round = full list exactly once
+  epoch: 0, // instance generation: stale timers from a hot-swapped instance stand down
+  warnedEmpty: false,
+  kickTimer: 0,
+  waitTimer: 0,
+  gap: { engZh: 700, zhEng: 600, next: 1400, example: 800, idle: 10000, kick: 6000 },
+}
+
+function sleep(ms) {
+  return new Promise((res) => { READER.waitTimer = window.setTimeout(res, ms) })
+}
+
+/** speechSynthesis for one text, resolved when it actually finishes. The
+ *  watchdog only covers engine start — a long meaning speaks for 10s+ and an
+ *  early resolve let the next word talk over the tail. */
+function ttsWait(text, lang, rate) {
+  return new Promise((resolve) => {
+    let settled = false
+    let started = false
+    let watch = 0
+    let cap = 0
+    const done = () => {
+      if (!settled) {
+        settled = true
+        window.clearTimeout(watch)
+        window.clearTimeout(cap)
+        resolve()
+      }
+    }
+    try {
+      const synth = window.speechSynthesis
+      if (!synth || typeof SpeechSynthesisUtterance !== 'function') { done(); return }
+      const u = new SpeechSynthesisUtterance(String(text == null ? '' : text))
+      u.lang = lang || 'en-US'
+      if (rate) u.rate = rate
+      if (/^zh/i.test(u.lang)) {
+        const list = VOICE_LIST.length > 0 ? VOICE_LIST : refreshVoices()
+        const zh = list.filter((x) => /^zh([-_]|$)/i.test(String((x && x.lang) || '')))
+        // Prefer a network/natural voice over the local OneCore ones when the
+        // browser exposes any — the offline fallback then sounds less robotic.
+        const v = zh.find((x) => x && x.localService === false) || zh[0] || null
+        if (v) u.voice = v
+      }
+      u.addEventListener('start', () => { started = true; window.clearTimeout(watch) }, { once: true })
+      u.addEventListener('end', done, { once: true })
+      u.addEventListener('error', done, { once: true })
+      synth.cancel()
+      synth.speak(u)
+      watch = window.setTimeout(() => { if (!started) { try { synth.cancel() } catch (e) {} done() } }, 9000) // engine never started — kill any late bloomer
+      cap = window.setTimeout(() => { if (started) { try { synth.cancel() } catch (e) {} done() } }, 30000)
+    } catch (e) { done() }
+  })
+}
+
+/** One <audio> playback, resolved true on 'ended', false when it never
+ *  started (load/play error or start timeout). The watchdog only guards the
+ *  START of playback: a full Chinese meaning legitimately runs 5-12s, and a
+ *  total-duration cutoff made the TTS fallback repeat it over the tail. */
+function audioWait(el) {
+  return new Promise((resolve) => {
+    let settled = false
+    let started = false
+    let watch = 0
+    let cap = 0
+    const done = (v) => {
+      if (!settled) {
+        settled = true
+        window.clearTimeout(watch)
+        window.clearTimeout(cap)
+        resolve(v)
+      }
+    }
+    watch = window.setTimeout(() => { if (!started) done(false) }, 4500)
+    cap = window.setTimeout(() => { if (started) { try { el.pause() } catch (e) {} done(true) } }, 30000)
+    el.addEventListener('playing', () => { started = true; window.clearTimeout(watch) }, { once: true })
+    el.addEventListener('ended', () => done(true), { once: true })
+    el.addEventListener('error', () => done(false), { once: true })
+    try { el.currentTime = 0 } catch (e) {}
+    try {
+      const p = el.play()
+      if (p && p.catch) p.catch(() => done(false))
+    } catch (e) { done(false) }
+  })
+}
+
+/** Clean a definition so the voice never reads markup out loud: literal
+ *  backslash-n sequences embedded in the word data, real newlines/tabs and
+ *  bare POS tags ("n.", "vt.") all become natural pauses or disappear. */
+function cleanSpeechZh(text) {
+  return String(text == null ? '' : text)
+    .replace(/\\[nrtf]/g, '；')
+    .replace(/[\r\n\t\f]+/g, '；')
+    .replace(/\b(?:vt|vi|adj|adv|prep|conj|pron|art|num|int|abbr|n|v)\.\s*/gi, '')
+    .replace(/\\+/g, '')
+    .replace(/[;；]{2,}/g, '；')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[；,，、\s]+|[；,，、\s]+$/g, '')
+}
+
+/** Long ECDICT meanings list every sense; reading them all drags a single
+ *  word out forever. Keep the first couple of senses within a short budget. */
+const MEANING_MAX_SENSES = 2
+const MEANING_MAX_CHARS = 48
+function shortenMeaning(clean) {
+  let out = String(clean || '').split('；').filter(Boolean).slice(0, MEANING_MAX_SENSES).join('；')
+  if (out.length > MEANING_MAX_CHARS) out = out.slice(0, MEANING_MAX_CHARS)
+  return out.replace(/[；,，、\s]+$/, '').trim()
+}
+
+/** Baidu's free sentence TTS: real neural Chinese voices for whole meanings.
+ *  Youdao dictvoice refuses Chinese sentences (HTTP 500), so this is the
+ *  online lane; the local speechSynthesis voice stays as the offline fallback. */
+function zhAudioUrl(text) {
+  return 'https://fanyi.baidu.com/gettts?lan=zh&text=' + encodeURIComponent(text) + '&spd=3&source=web'
+}
+
+/** One Chinese meaning: online sentence voice first, browser TTS as fallback. */
+async function readerSpeakZh(text, token) {
+  const clean = shortenMeaning(cleanSpeechZh(text))
+  if (!clean) return
+  const ok = await playCached('zh:' + clean, zhAudioUrl(clean))
+  if (token !== READER.token) return
+  if (ok) return
+  await ttsWait(clean, 'zh-CN')
+}
+
+const EXAMPLE_CACHE = new Map() // word -> example sentence or null (misses cached too)
+
+/** fetch+JSON with a hard timeout; resolves null on any failure so the next
+ *  example lane can take over. */
+async function fetchJson(url) {
+  try {
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null
+    const timer = ctrl ? window.setTimeout(() => { try { ctrl.abort() } catch (e) {} }, 6000) : 0
+    const res = await fetch(url, ctrl ? { signal: ctrl.signal } : undefined)
+    if (timer) window.clearTimeout(timer)
+    if (!res || !res.ok) return null
+    return await res.json()
+  } catch (e) { return null }
+}
+
+/** A corpus sentence is listenable when it actually contains the word and
+ *  stays in a sane size — raw corpus matches can otherwise be tiny fragments
+ *  or proper-noun heavy. */
+function pickSentence(word, text) {
+  const s = String(text || '').trim()
+  if (s.length < 8 || s.length > 140) return null
+  const words = s.split(/\s+/).filter(Boolean)
+  if (words.length < 3 || words.length > 16) return null
+  if (!s.toLowerCase().includes(String(word).toLowerCase())) return null
+  return s
+}
+
+/** Lane 1: Free Dictionary API — curated dictionary examples. */
+async function dictApiExample(word) {
+  const data = await fetchJson('https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(word))
+  const rows = Array.isArray(data) ? data : []
+  for (const row of rows) {
+    for (const m of (row && row.meanings) || []) {
+      for (const d of (m && m.definitions) || []) {
+        const t = String((d && d.example) || '').trim()
+        if (t.length >= 8 && t.length <= 140) return t
+      }
+    }
+  }
+  return null
+}
+
+/** Lane 2: Tatoeba corpus — some real sentence containing the word. */
+async function tatoebaExample(word) {
+  const data = await fetchJson('https://api.tatoeba.org/unstable/sentences?lang=eng&sort=relevance&limit=8&q=' + encodeURIComponent(word))
+  const rows = (data && Array.isArray(data.data)) ? data.data : []
+  for (const row of rows) {
+    const s = pickSentence(word, row && row.text)
+    if (s) return s
+  }
+  return null
+}
+
+/** Fetch one English example sentence for a word, trying both free lanes.
+ *  Misses are cached as well so a word with no examples anywhere is skipped
+ *  instantly on later cycles instead of re-requesting every pass. */
+async function fetchExample(word, token) {
+  if (EXAMPLE_CACHE.has(word)) return EXAMPLE_CACHE.get(word)
+  const ex = (await dictApiExample(word)) || (await tatoebaExample(word)) || null
+  EXAMPLE_CACHE.set(word, ex)
+  if (token !== READER.token) return null
+  return ex
+}
+
+/** One English example sentence, played AFTER the word is fully done
+ *  (meaning and repeat included). Sentence TTS via baidu (youdao refuses
+ *  sentences), browser TTS as the offline fallback — never translated. */
+async function readerSpeakExample(word, token) {
+  const ex = await fetchExample(word, token)
+  if (!ex || token !== READER.token) return
+  const url = 'https://fanyi.baidu.com/gettts?lan=en&text=' + encodeURIComponent(ex) + '&spd=3&source=web'
+  const ok = await playCached('ex:' + word, url)
+  if (token !== READER.token) return
+  if (ok) return
+  await ttsWait(ex, 'en-US', 0.95)
+}
+
+/** Prime a cached (not playing) Audio element for later use, keeping the
+ *  prefetch map bounded. Shared by the word / meaning / example lanes. */
+function primeCached(key, url) {
+  if (AUDIO_PREFETCH.has(key)) return
+  try {
+    const el = new Audio()
+    el.preload = 'auto'
+    el.src = url
+    AUDIO_PREFETCH.set(key, el)
+    if (AUDIO_PREFETCH.size > AUDIO_KEEP) {
+      const first = AUDIO_PREFETCH.keys().next().value
+      const old = AUDIO_PREFETCH.get(first)
+      if (old && old !== AUDIO_CURRENT) { try { old.pause(); old.removeAttribute('src') } catch (e) {} }
+      AUDIO_PREFETCH.delete(first)
+    }
+  } catch (e) {}
+}
+
+/** Shared audio lane: play `url` (cached under `key`) to its true end.
+ *  Resolves true when it played, false when it never started — the caller
+ *  then runs its own fallback voice. */
+async function playCached(key, url) {
+  primeCached(key, url)
+  const el = AUDIO_PREFETCH.get(key)
+  if (!el) return false
+  AUDIO_CURRENT = el // so stopAudio() (manual speak, stop) can cut it off
+  const ok = await audioWait(el)
+  if (!ok) {
+    try { el.pause() } catch (e) {}
+    AUDIO_PREFETCH.delete(key) // drop the broken element so the next round retries fresh
+  }
+  return ok
+}
+
+/** One English word through the same online→TTS ladder as speak(), awaited. */
+async function readerSpeakEng(word, accent, token) {
+  const url = audioUrl(word, accent)
+  if (url) {
+    const ok = await playCached(audioKey(word, accent), url)
+    if (token !== READER.token) return
+    if (ok) return
+  }
+  await ttsWait(word, accent === 'uk' ? 'en-GB' : 'en-US', 0.92)
+}
+
+async function readerLoop(token) {
+  while (READER.on && token === READER.token) {
+    try {
+      if (READER.seq.length === 0) {
+        const st = store.get()
+        READER.seq = readerQueue(st)
+        if (READER.seq.length === 0) {
+          READER.idx = 0
+          READER.roundLeft = 0
+          if (!READER.warnedEmpty) {
+            READER.warnedEmpty = true
+            try { flash('readEmpty') } catch (e) {}
+          }
+          await sleep(READER.gap.idle) // nothing learned yet; keep watching
+          continue
+        }
+        // Rotating start: every fresh start begins one word further into the
+        // queue (persisted) — but a round is ALWAYS the full list exactly
+        // once (roundLeft), so nothing repeats before every word had a turn.
+        READER.idx = (st.settings.readHead || 0) % READER.seq.length
+        READER.roundLeft = READER.seq.length
+        store.setSettings({ readHead: (READER.idx + 1) % READER.seq.length })
+      }
+      if (READER.idx >= READER.seq.length) READER.idx = 0 // wrap within the round
+      const entry = READER.seq[READER.idx]
+      const state = store.get()
+      const accent = resolveAccent(state.settings.accent)
+      const mode = READ_MODES[state.settings.readMode] ? state.settings.readMode : 'wt'
+      const nxt = READER.seq[READER.idx + 1]
+      if (nxt) { try { prefetchAudio(nxt.w, accent) } catch (e) {} }
+      // Prime the next meaning's online voice during the current gap so the
+      // switch from one word to the next stays seamless.
+      const nextZh = nxt ? shortenMeaning(cleanSpeechZh(nxt.t)) : ''
+      if (nextZh) primeCached('zh:' + nextZh, zhAudioUrl(nextZh))
+      // Pull the next word's example early so the sentence is ready when the
+      // word's turn comes around.
+      if (nxt && state.settings.readExample && !EXAMPLE_CACHE.has(nxt.w)) {
+        try { fetchExample(nxt.w, token).catch(() => {}) } catch (e) {}
+      }
+      await readerSpeakEng(entry.w, accent, token)
+      if (token !== READER.token) return
+      if (mode !== 'w' && entry.t) {
+        await sleep(READER.gap.engZh)
+        if (token !== READER.token) return
+        await readerSpeakZh(entry.t, token)
+        if (token !== READER.token) return
+        if (mode === 'wtw') {
+          await sleep(READER.gap.zhEng)
+          if (token !== READER.token) return
+          await readerSpeakEng(entry.w, accent, token)
+          if (token !== READER.token) return
+        }
+      }
+      // Example sentence — strictly AFTER the word is fully done (meaning and
+      // repeat per mode), English only, never translated.
+      if (state.settings.readExample) {
+        await sleep(READER.gap.example)
+        if (token !== READER.token) return
+        await readerSpeakExample(entry.w, token)
+        if (token !== READER.token) return
+      }
+      READER.idx++
+      READER.roundLeft--
+      if (READER.roundLeft <= 0) READER.seq = [] // round complete → rebuild (start rotates)
+      await sleep(READER.gap.next)
+    } catch (e) {
+      await sleep(3000) // any surprise: back off, keep the loop alive
+    }
+  }
+}
+
+/** Fresh start: rebuild the queue and enter the loop. */
+function readerStart() {
+  READER.token++
+  const token = READER.token
+  READER.seq = []
+  READER.idx = 0
+  READER.roundLeft = 0
+  READER.warnedEmpty = false
+  readerLoop(token)
+}
+
+/** Stop everything without touching settings (also used by store.reset).
+ *  Pauses EVERY element we ever created — not just the current one — and
+ *  re-confirms silence shortly after, because Chromium's cancel() does not
+ *  always stop an utterance it was told to stop. */
+function readerStopHard() {
+  READER.on = false
+  READER.token++
+  window.clearTimeout(READER.kickTimer)
+  const tk = READER.token
+  const epochAtStop = READER.epoch
+  const hush = () => {
+    try { if (window.speechSynthesis) window.speechSynthesis.cancel() } catch (e) {}
+    stopAudio()
+    try {
+      for (const el of AUDIO_PREFETCH.values()) { try { el.pause() } catch (e) {} }
+    } catch (e) {}
+  }
+  hush()
+  window.setTimeout(() => {
+    try {
+      if (READER.on || READER.token !== tk) return // restarted or re-toggled
+      if ((window.__cetVocabReaderEpoch || 0) !== epochAtStop) return // instance replaced
+      hush()
+    } catch (e) {}
+  }, 250)
+}
+
+/** Toggle the ambient reader; persists across reloads via settings.readOn. */
+function readerSet(on) {
+  const next = !!on
+  if (next === READER.on) return
+  if (next) {
+    READER.on = true
+    try { store.setSettings({ readOn: true }) } catch (e) {}
+    readerStart()
+  } else {
+    readerStopHard()
+    try { store.setSettings({ readOn: false }) } catch (e) {}
+  }
+}
+
+/** Manual playback calls this (from speak()): step aside, resume a bit later. */
+function readerKick() {
+  if (!READER.on) return
+  READER.token++
+  window.clearTimeout(READER.kickTimer)
+  READER.kickTimer = window.setTimeout(() => {
+    if (!READER.on) return
+    try { if ((window.__cetVocabReaderEpoch || 0) !== READER.epoch) return } catch (e) {} // hot-swapped
+    READER.token++
+    readerLoop(READER.token)
+  }, READER.gap.kick)
+}
+
+/** Range/mode changed: drop the queue so the next step rebuilds with it. */
+function readerApplySettingsChange() {
+  try {
+    if (READER.on) { READER.seq = []; READER.idx = 0 }
+  } catch (e) {}
 }
 
 // ------------------------------------------------- adaptive accent colors
@@ -591,8 +1038,8 @@ function confusionScore(w, c) {
 function defaultState() {
   return {
     v: 1,
-    settings: { book: 'cet4', dailyNew: 10, autoSpeak: false, speakOnOpen: false, mode: 'card', autoOpen: true, appearance: 'auto', accent: 'auto', voice: '' },
-    words: {}, // word -> { box, due, seen, ok, fz, no }
+    settings: { book: 'cet4', dailyNew: 10, autoSpeak: false, speakOnOpen: false, mode: 'card', autoOpen: true, appearance: 'auto', accent: 'auto', voice: '', readOn: false, readRange: 'd2', readMode: 'wt', readHead: 0, readExample: false },
+    words: {}, // word -> { box, due, seen, last, first, ok, fz, no }
     today: { date: todayStr(), newDone: 0, reviewDone: 0 },
     streak: 0,
     lastDay: '',
@@ -686,6 +1133,8 @@ const store = {
       fresh.win = keep.win
       fresh.open = keep.open
       Object.keys(s).forEach((k) => { s[k] = fresh[k] })
+      // Wiped progress must not leave the ambient reader talking to nothing.
+      try { readerStopHard() } catch (e) {}
     })
   },
   answer(word, grade, countToday) {
@@ -693,7 +1142,7 @@ const store = {
     store.set((s) => {
       if (countToday !== false && s.today.date !== todayStr()) s.today = { date: todayStr(), newDone: 0, reviewDone: 0 }
       const isNew = !s.words[word]
-      const prev = s.words[word] || { box: 0, due: 0, seen: 0, ok: 0, fz: 0, no: 0 }
+      const prev = s.words[word] || { box: 0, due: 0, seen: 0, last: 0, ok: 0, fz: 0, no: 0 }
       const e = { ...prev }
       if (grade === GRADE_KNOW) {
         e.box = Math.min((prev.box || 0) + 1, GRADUATED_BOX)
@@ -708,6 +1157,8 @@ const store = {
         e.no++
       }
       e.seen++
+      e.last = now // last-study timestamp: feeds the ambient reader's range filter
+      if (isNew) e.first = now // first-ever study time: 新学 vs 复习 becomes detectable per word
       s.words = { ...s.words, [word]: e }
       if (countToday !== false) {
         if (isNew) s.today = { ...s.today, newDone: s.today.newDone + 1 }
@@ -826,8 +1277,8 @@ function bookStats(state) {
 
 // ------------------------------------------------------------------- locale
 
-const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","settingsLearn":"学习","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","dailyPerDay":"{n} 词/天","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","resizeHint":"拖动改变大小 · 双击复位","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","quizNext":"下一个","quizStay":"答错会停在这里，按 → 或点「下一个」继续","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色","hintCard":"Space 显示释义 · 1/2/3 评分","scTitle":"快捷键","scToggle":"展开 / 收起悬浮窗","scModeCard":"切换到卡片模式","scModeQuiz":"切换到选择题模式","scSpeak":"朗读当前单词","scReveal":"显示释义","scGrade":"认识 / 模糊 / 不认识","scPick":"选择答案 1-4","scNext":"下一个词（答完题后）","scNote":"单键（Space、数字）只在窗口展开且光标不在输入框时生效；Alt 组合键在页面任何位置都能用。","scReview":"复习稍后到期的词（最多 20 个）","scExtra":"加练 10 个生词","scExit":"退出加练（加练中）","practiceNoReview":"暂时没有待复习的词","practiceNoExtra":"没有更多生词可以加练"}
-const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","settingsLearn":"Learning","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","dailyPerDay":"{n} / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","resizeHint":"Drag to resize · double-click to reset","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","quizNext":"Next","quizStay":"Wrong answers stay put — press → to continue","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark","hintCard":"Space reveal · 1/2/3 grade","scTitle":"Keyboard shortcuts","scToggle":"Expand / collapse the window","scModeCard":"Switch to card mode","scModeQuiz":"Switch to quiz mode","scSpeak":"Speak the current word","scReveal":"Reveal the meaning","scGrade":"Known / Fuzzy / Miss","scPick":"Pick an answer (1-4)","scNext":"Next word (after answering)","scNote":"Single keys (Space, digits) work only while the window is expanded and the caret is not in a text field; Alt combos work anywhere on the page.","scReview":"Review words due later (up to 20)","scExtra":"Practise 10 new words","scExit":"Exit practice (while practising)","practiceNoReview":"Nothing due for review yet","practiceNoExtra":"No more new words to practise"}
+const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","settingsLearn":"学习","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","dailyPerDay":"{n} 词/天","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","resizeHint":"拖动改变大小 · 双击复位","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","quizNext":"下一个","quizStay":"答错会停在这里，按 → 或点「下一个」继续","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色","hintCard":"Space 显示释义 · 1/2/3 评分","scTitle":"快捷键","scToggle":"展开 / 收起悬浮窗","scModeCard":"切换到卡片模式","scModeQuiz":"切换到选择题模式","scSpeak":"朗读当前单词","scReveal":"显示释义","scGrade":"认识 / 模糊 / 不认识","scPick":"选择答案 1-4","scNext":"下一个词（答完题后）","scNote":"单键（Space、数字）只在窗口展开且光标不在输入框时生效；Alt 组合键在页面任何位置都能用。","scReview":"复习稍后到期的词（最多 20 个）","scExtra":"加练 10 个生词","scExit":"退出加练（加练中）","practiceNoReview":"暂时没有待复习的词","practiceNoExtra":"没有更多生词可以加练","readModeLabel":"朗读内容","readModeW":"只读单词","readModeWT":"词 + 翻译","readModeWTW":"词→译→词","readRangeLabel":"朗读范围","readRangeToday":"今天","readRangeYd":"今天和昨天","readRangeNew":"新学词（昨天起）","readRangeD3":"最近 3 天","readRangeD7":"最近 7 天","readRangeAll":"全部已学","readerOn":"停止循环朗读","readerOff":"循环朗读单词","readEmpty":"还没有已学的词，先学几个再听","settingsReadExample":"朗读例句","readExampleHint":"部分单词暂无例句，将自动跳过"}
+const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","settingsLearn":"Learning","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","dailyPerDay":"{n} / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","resizeHint":"Drag to resize · double-click to reset","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","quizNext":"Next","quizStay":"Wrong answers stay put — press → to continue","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark","hintCard":"Space reveal · 1/2/3 grade","scTitle":"Keyboard shortcuts","scToggle":"Expand / collapse the window","scModeCard":"Switch to card mode","scModeQuiz":"Switch to quiz mode","scSpeak":"Speak the current word","scReveal":"Reveal the meaning","scGrade":"Known / Fuzzy / Miss","scPick":"Pick an answer (1-4)","scNext":"Next word (after answering)","scNote":"Single keys (Space, digits) work only while the window is expanded and the caret is not in a text field; Alt combos work anywhere on the page.","scReview":"Review words due later (up to 20)","scExtra":"Practise 10 new words","scExit":"Exit practice (while practising)","practiceNoReview":"Nothing due for review yet","practiceNoExtra":"No more new words to practise","readModeLabel":"Read aloud","readModeW":"Word only","readModeWT":"Word + meaning","readModeWTW":"Word → meaning → word","readRangeLabel":"Range","readRangeToday":"Today","readRangeYd":"Today & yesterday","readRangeNew":"Newly learned","readRangeD3":"Last 3 days","readRangeD7":"Last 7 days","readRangeAll":"All learned","readerOn":"Stop loop reading","readerOff":"Loop-read words","readEmpty":"No learned words yet — learn a few first","settingsReadExample":"Read example sentences","readExampleHint":"Some words have no examples yet — skipped automatically"}
 
 let localeBinder = null
 const t = (key) => {
@@ -1030,14 +1481,20 @@ const CSS = `
 }
 .cv-resetbtn:hover { background: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 10%, transparent); }
 .cv-foot { margin-top: 12px; font-size: 11px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); text-align: center; }
+/* Collapsed cluster: reader toggle on the LEFT of the pill — one connected
+   group that is grabbed and dragged as a whole, so the toggle follows live. */
+.cv-cluster {
+  position: fixed; display: flex; align-items: center; gap: 8px;
+  user-select: none; z-index: 3;
+}
+.cv-cluster--default { right: 24px; top: 88px; }
 .cv-pill {
-  position: fixed; display: flex; align-items: center; gap: 7px;
+  display: flex; align-items: center; gap: 7px;
   padding: 9px 15px; border-radius: 999px; border: none; cursor: grab; touch-action: none;
   background: var(--cv-accent, var(--dsw-alias-brand-primary)); color: var(--cv-accent-fg, #fff); font-size: 13.5px; font-weight: 600;
   box-shadow: 0 8px 22px rgba(0,0,0,.28); user-select: none;
 }
 .cv-pill:active { cursor: grabbing; }
-.cv-pill--default { right: 24px; top: 88px; }
 .cv-mode-row { display: flex; gap: 6px; margin-bottom: 10px; }
 .cv-mode-btn {
   flex: 1; padding: 6px 0; font-size: 12.5px; cursor: pointer; border-radius: 8px;
@@ -1132,6 +1589,34 @@ const CSS = `
 .cv-flash {
   margin-top: 10px; padding: 6px 10px; border-radius: 8px; text-align: center; font-size: 11.5px;
   background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
+}
+/* Ambient-reader toggle: a round button that rides next to the pill (window
+   collapsed) or just above the expanded window, so it is reachable in both. */
+.cv-reader {
+  position: fixed; right: 24px; top: 88px; width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; cursor: pointer; font-size: 15px; line-height: 1; padding: 0;
+  border: 1px solid var(--cv-border-2, var(--dsw-alias-border-l2));
+  background: var(--cv-surface, var(--dsw-alias-bg-overlay));
+  color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
+  box-shadow: 0 6px 18px rgba(0,0,0,.2); user-select: none; z-index: 3;
+}
+.cv-reader:hover { filter: brightness(1.06); }
+.cv-read-ex-hint { text-align: left; padding: 0 0 2px 102px; margin-top: -2px; }
+.cv-reader--incluster { position: static; } /* flex child of the pill cluster */
+.cv-reader--above { top: 50px; }
+.cv-reader--on {
+  background: var(--cv-accent, var(--dsw-alias-brand-primary));
+  color: var(--cv-accent-fg, #fff); border-color: transparent;
+}
+.cv-reader--on::after {
+  content: ''; position: absolute; inset: -5px; border-radius: 50%;
+  border: 2px solid var(--cv-accent, var(--dsw-alias-brand-primary));
+  animation: cv-pulse 1.6s ease-out infinite; pointer-events: none;
+}
+@keyframes cv-pulse {
+  from { transform: scale(.78); opacity: .55; }
+  to { transform: scale(1.28); opacity: 0; }
 }
 `
 
@@ -1291,7 +1776,7 @@ function beginDrag(e, geom) {
   if (e.button !== 0) return
   if (e.target && e.target.closest && e.target.closest('button')) return
   dragMoved = false
-  const el = e.currentTarget.closest('.cv-window') || e.currentTarget.closest('.cv-pill')
+  const el = e.currentTarget.closest('.cv-cluster') || e.currentTarget.closest('.cv-window')
   if (!el) return
   const rect = el.getBoundingClientRect()
   const offX = e.clientX - rect.left
@@ -1306,6 +1791,7 @@ function beginDrag(e, geom) {
     el.style.left = x + 'px'
     el.style.top = y + 'px'
     el.style.right = 'auto'
+    readerFollowDrag(x, y) // the store commits on pointer-up only; follow live
   }
   const up = () => {
     try { header.releasePointerCapture(e.pointerId) } catch (err) {}
@@ -1742,6 +2228,39 @@ function SettingsView({ state }) {
         }, '🔊'),
       ),
     ),
+    h('div', { className: 'cv-set-row' },
+      h('span', { className: 'cv-set-label' }, t('readModeLabel')),
+      seg(state.settings.readMode || 'wt', [
+        { v: 'w', label: t('readModeW') },
+        { v: 'wt', label: t('readModeWT') },
+        { v: 'wtw', label: t('readModeWTW') },
+      ], (v) => { store.setSettings({ readMode: v }); readerApplySettingsChange() }),
+    ),
+    h('div', { className: 'cv-set-row' },
+      h('span', { className: 'cv-set-label' }, t('readRangeLabel')),
+      h('select', {
+        className: 'cv-select', value: state.settings.readRange || 'd2',
+        'aria-label': t('readRangeLabel'),
+        onChange: (e) => { store.setSettings({ readRange: e.target.value }); readerApplySettingsChange() },
+      },
+        [
+          { v: 'today', label: t('readRangeToday') },
+          { v: 'd2', label: t('readRangeYd') },
+          { v: 'new', label: t('readRangeNew') },
+          { v: 'd3', label: t('readRangeD3') },
+          { v: 'd7', label: t('readRangeD7') },
+          { v: 'all', label: t('readRangeAll') },
+        ].map((o) => h('option', { key: o.v, value: o.v }, o.label))),
+    ),
+    h('div', { className: 'cv-set-row' },
+      h('span', { className: 'cv-set-label' }, t('settingsReadExample')),
+      h('button', {
+        role: 'switch', 'aria-checked': !!state.settings.readExample,
+        className: 'cv-switch' + (state.settings.readExample ? ' cv-switch--on' : ''),
+        onClick: () => store.setSettings({ readExample: !state.settings.readExample }),
+      }, h('i', null)),
+    ),
+    h('div', { className: 'cv-hint cv-read-ex-hint' }, t('readExampleHint')),
     h('div', { className: 'cv-hint cv-voice-empty' },
       h('div', null, enVoiceCount() > 0
         ? t('voiceSysOk').replace('{n}', String(enVoiceCount()))
@@ -1874,23 +2393,92 @@ function VocabPill() {
   const badge = due.reviews.length + due.fresh.length
   const geom = state.win || {}
   const style = geom.x != null && geom.y != null ? { left: geom.x + 'px', top: geom.y + 'px' } : null
+  // One flex cluster: reader toggle on the LEFT of the pill. Dragging moves
+  // the cluster, so the toggle follows the drag in real time for free.
   return h('div', { className: 'cv-root' },
     h('div', {
-      className: 'cv-pill' + (geom.x == null ? ' cv-pill--default' : ''),
+      className: 'cv-cluster' + (geom.x == null ? ' cv-cluster--default' : ''),
       style,
-      onPointerDown: (e) => beginDrag(e, null),
-      onClick: () => { if (!dragMoved) store.minimize(false) },
-      title: t('title'),
     },
-      h('span', null, '📖 ' + t('title')),
-      badge > 0 && h('span', { className: 'cv-pill-badge' }, String(badge)),
+      h(ReaderToggle, { inCluster: true }),
+      h('div', {
+        className: 'cv-pill',
+        onPointerDown: (e) => beginDrag(e, null),
+        onClick: () => { if (!dragMoved) store.minimize(false) },
+        title: t('title'),
+      },
+        h('span', null, '📖 ' + t('title')),
+        badge > 0 && h('span', { className: 'cv-pill-badge' }, String(badge)),
+      ),
     ))
+}
+
+const READER_ABOVE = 38 // button height + gap when riding above the expanded window
+
+/** True when the expanded window is on screen (pill hidden, toggle floats). */
+function readerExpanded(s) {
+  return !!s && s.open !== false && !(s.win && s.win.min)
+}
+
+/** Position of the floating toggle for a dragged expanded window. */
+function readerAboveStyle(geom) {
+  return { left: geom.x + 'px', top: Math.max(6, geom.y - READER_ABOVE) + 'px' }
+}
+
+// Expanded window: the toggle floats above it, and the store only commits
+// geometry on pointer-up — beginDrag feeds this every move so it follows live.
+// When collapsed, the toggle lives inside the pill cluster and needs no help.
+function readerFollowDrag(x, y) {
+  try {
+    const btn = document.querySelector('[data-cv-reader]')
+    if (!btn) return
+    if (readerExpanded(store.get())) {
+      const pos = readerAboveStyle({ x, y })
+      btn.style.left = pos.left
+      btn.style.top = pos.top
+      btn.style.right = 'auto'
+    }
+  } catch (e) {}
+}
+
+// The ambient-reader power switch. Collapsed: it sits inside the pill cluster,
+// on the pill's left (moves with it). Expanded: it floats above the window.
+// Closed: it takes the pill's old spot so it is still one click away.
+function ReaderToggle({ inCluster }) {
+  const state = useStoreState()
+  useLocaleTick()
+  const on = !!(state && state.settings && state.settings.readOn)
+  const geom = (state && state.win) || {}
+  const expanded = readerExpanded(state)
+  const dragged = geom.x != null && geom.y != null
+  let style = null
+  if (!inCluster && !expanded) {
+    style = dragged ? { left: geom.x + 'px', top: geom.y + 'px' } : null // CSS default = the pill's spot
+  } else if (!inCluster && expanded && dragged) {
+    style = readerAboveStyle(geom)
+  }
+  const cls = 'cv-reader' +
+    (inCluster ? ' cv-reader--incluster' : expanded && !dragged ? ' cv-reader--above' : '') +
+    (on ? ' cv-reader--on' : '')
+  return h('button', {
+    className: cls,
+    style,
+    'data-cv-reader': '',
+    title: on ? t('readerOn') : t('readerOff'),
+    'aria-label': on ? t('readerOn') : t('readerOff'),
+    onClick: () => readerSet(!on),
+  }, on ? '🔊' : '🔈')
 }
 
 function VocabApp() {
   const state = useStoreState()
-  if (!state || state.open === false) return null
-  return (state.win && state.win.min) ? h(VocabPill) : h(VocabWindow)
+  if (!state) return null
+  // The reader toggle survives every window state: inside the pill cluster
+  // when collapsed, floating on its own when expanded or fully closed.
+  const collapsed = state.open !== false && !readerExpanded(state)
+  const main = state.open === false ? null : collapsed ? h(VocabPill) : h(VocabWindow)
+  const floatToggle = collapsed ? null : h(ReaderToggle, null)
+  return h('div', { className: 'cv-root' }, main, floatToggle)
 }
 
 // ------------------------------------------------------------- plugin entry
@@ -1898,6 +2486,34 @@ function VocabApp() {
 exports.name = PLUGIN_ID
 exports.inject = ['slots', 'locale', 'sessions', 'remote']
 exports.apply = function apply(ctx) {
+  // Epoch: every module instance bumps it. Stale timers left behind by a
+  // hot-swapped instance compare theirs against the global and stand down
+  // instead of resurrecting an orphan loop the new instance cannot reach.
+  let epoch = 0
+  try {
+    if (typeof window !== 'undefined') {
+      window.__cetVocabReaderEpoch = (window.__cetVocabReaderEpoch || 0) + 1
+      epoch = window.__cetVocabReaderEpoch
+      READER.epoch = epoch
+    }
+  } catch (e) {}
+
+  // A hot-swapped previous instance (client HMR / partial reload) can leave
+  // its ambient-reader loop running with timers nothing else can reach — the
+  // classic "toggled off but it keeps talking, toggle on = two voices" bug.
+  // Kill any inherited loop BEFORE wiring this instance, then expose the kill
+  // switch for whatever instance comes after us.
+  try {
+    if (typeof window !== 'undefined' && typeof window.__cetVocabReaderStop === 'function') {
+      window.__cetVocabReaderStop()
+    }
+  } catch (e) {}
+  try {
+    if (typeof window !== 'undefined') {
+      window.__cetVocabReaderStop = function () { try { readerStopHard() } catch (e) {} }
+    }
+  } catch (e) {}
+
   ctx.effect(
     () => {
       const style = document.createElement('style')
@@ -2087,6 +2703,26 @@ exports.apply = function apply(ctx) {
   } catch (e) {
     console.warn('[dsh-cet-vocab] busy watcher unavailable', e)
   }
+
+  // Resume the ambient reader after a reload when the user left it on. The
+  // browser may keep audio silent until the first user gesture (autoplay
+  // policy); the loop keeps ticking either way and starts with the next click.
+  try {
+    if (store.get().settings.readOn) {
+      window.setTimeout(() => {
+        try {
+          if (window.__cetVocabReaderEpoch !== epoch) return // hot-swapped meanwhile
+          if (store.get().settings.readOn && !READER.on) { READER.on = true; readerStart() }
+        } catch (e) {}
+      }, 1500)
+    }
+  } catch (e) {}
+
+  // Plugin disable / unload / hot-swap must not leave the loop talking.
+  ctx.effect(
+    () => () => { try { readerStopHard() } catch (e) {} },
+    'dsh-cet-vocab: reader teardown',
+  )
 }
 
 return module.exports;

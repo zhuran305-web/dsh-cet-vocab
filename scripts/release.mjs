@@ -82,6 +82,9 @@ const TOKEN_FILE = opt('--token-file') || process.env.NPM_TOKEN_FILE
   || 'C:\\Users\\chichen\\Desktop\\工具\\AI\\重要文件\\npm token.txt'
 const NPM_REGISTRY = 'https://registry.npmjs.org/'
 const PKG = resolvePkgDir(import.meta.url, opt('--pkg'))
+// 子进程里的 node 一律用当前解释器的绝对路径：沙箱/部分 shell 下裸 `node`
+// 经过 spawnSync(shell:true) 会 spawn 失败（status=null），与 PATH 无关。
+const NODE_BIN = process.env.NODE_BIN || process.execPath
 const GH_ENV = { HTTPS_PROXY: PROXY, HTTP_PROXY: PROXY, https_proxy: PROXY, http_proxy: PROXY }
 const NO_PROXY_ENV = { HTTPS_PROXY: '', HTTP_PROXY: '', https_proxy: '', http_proxy: '' }
 
@@ -158,7 +161,7 @@ const pkgJson = JSON.parse(pkgText)
 const oldVersion = pkgJson.version
 if (pkgJson.private === true) fail('package.json 里 private: true，npm 不接受发布（先删掉这行）')
 if (!semverGt(newVersion, oldVersion)) fail(`新版本 ${newVersion} 必须大于当前版本 ${oldVersion}`)
-for (const tool of ['node', 'git', ...(DO_NPM ? ['npm'] : []), 'pnpm', ...(DO_GH ? ['gh'] : [])]) {
+for (const tool of [NODE_BIN, 'git', ...(DO_NPM ? ['npm'] : []), 'pnpm', ...(DO_GH ? ['gh'] : [])]) {
   const r = run(tool, ['--version'], { quiet: true, allowFail: true })
   if (r.status !== 0) fail(`找不到可执行文件：${tool}`)
 }
@@ -192,12 +195,12 @@ if (DRY) {
 
 // ------------------------------------------------------------------ 2 同步 i18n
 step('同步 i18n（locale/*.json ← client.src.js 内联字典）')
-const chk = run('node', ['scripts/sync_locale.mjs', '--check'], { quiet: true, allowFail: true })
+const chk = run(NODE_BIN, ['scripts/sync_locale.mjs', '--check'], { quiet: true, allowFail: true })
 if (chk.status === 2) fail('内联 ZH/EN 键集本身不一致，先修 client.src.js')
 if (chk.status === 1) {
   warn('locale 文件与内联字典有漂移，写入…')
-  run('node', ['scripts/sync_locale.mjs'], { quiet: true })
-  const again = run('node', ['scripts/sync_locale.mjs', '--check'], { quiet: true, allowFail: true })
+  run(NODE_BIN, ['scripts/sync_locale.mjs'], { quiet: true })
+  const again = run(NODE_BIN, ['scripts/sync_locale.mjs', '--check'], { quiet: true, allowFail: true })
   if (again.status !== 0) fail('同步后仍有漂移')
   info('已同步并复核 PASS')
 } else {
@@ -215,7 +218,7 @@ info(`package.json 已更新${DRY ? '（dry-run 结束会回滚）' : ''}`)
 
 // ------------------------------------------------------------------ 4 构建
 step('构建 client.js')
-run('node', ['scripts/build_client.mjs'])
+run(NODE_BIN, ['scripts/build_client.mjs'])
 const built = readFileSync(join(PKG, 'client.js'), 'utf8')
 if (built.includes('__WORDS__')) fail('client.js 里还残留 /*__WORDS__*/ 占位符')
 info(`client.js ${Buffer.byteLength(built)} B`)
@@ -223,7 +226,7 @@ info(`client.js ${Buffer.byteLength(built)} B`)
 // ------------------------------------------------------------------ 5 冒烟（工作副本）
 if (DO_SMOKE) {
   step('冒烟（工作副本）')
-  run('node', ['scripts/smoke_release_install.mjs'])
+  run(NODE_BIN, ['scripts/smoke_release_install.mjs'])
 } else {
   step('冒烟（工作副本）：按 --skip-smoke 跳过')
 }
@@ -254,7 +257,7 @@ if (!existsSync(join(unpacked, 'package.json'))) fail('tgz 解包后没有 packa
 const unpackedPkg = JSON.parse(readFileSync(join(unpacked, 'package.json'), 'utf8'))
 if (unpackedPkg.version !== newVersion) fail(`解包后的版本号是 ${unpackedPkg.version}，不是 ${newVersion}`)
 if (unpackedPkg.private === true) fail('解包后的 package.json 里 private: true')
-if (DO_SMOKE) run('node', ['scripts/smoke_release_install.mjs', `dist/.extract-${newVersion}/package`, 'client.js'])
+if (DO_SMOKE) run(NODE_BIN, ['scripts/smoke_release_install.mjs', `dist/.extract-${newVersion}/package`, 'client.js'])
 else info('按 --skip-smoke 跳过解包冒烟')
 
 // ------------------------------------------------------------------ 8 真实安装验证

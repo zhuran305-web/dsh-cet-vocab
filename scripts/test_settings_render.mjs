@@ -71,11 +71,11 @@ function render(panelInit, state) {
   let VOICE_WARMED = false
   const factory = new Function(
     'React', 'h', 't', 'store', 'clamp', 'fmtT', 'SC_GUIDE', 'SC', 'enVoiceCount',
-    'speak', 'VOICE_WARMED', 'refreshVoices', 'warmUpVoices', 'setVoices',
+    'speak', 'VOICE_WARMED', 'refreshVoices', 'warmUpVoices', 'setVoices', 'readerApplySettingsChange',
     fnSrc + '\nreturn SettingsView',
   )
   const Comp = factory(React, h, t, store, clamp, fmtT, SC_GUIDE, SC, enVoiceCount,
-    speak, VOICE_WARMED, refreshVoices, warmUpVoices, setVoices)
+    speak, VOICE_WARMED, refreshVoices, warmUpVoices, setVoices, () => {})
   const tree = Comp({ state })
   return { tree, setterCalls }
 }
@@ -93,7 +93,7 @@ const text = (node) => walk(node).filter((n) => typeof n.type === 'string')
   .join(' ')
 
 const state = {
-  settings: { book: 'cet4', dailyNew: 10, accent: 'us', appearance: 'auto', autoSpeak: true, autoOpen: true },
+  settings: { book: 'cet4', dailyNew: 10, accent: 'us', appearance: 'auto', autoSpeak: true, autoOpen: true, readMode: 'wt', readRange: 'd7' },
 }
 
 let pass = 0
@@ -127,7 +127,20 @@ check('学习页渲染不抛异常', !!learn.tree)
 check('学习页有返回按钮 + 标题', lnodes.some((n) => cls(n) === 'cv-set-back') && lnodes.some((n) => cls(n) === 'cv-sub-title'))
 check('返回按钮文案 = ‹ 设置', text(lnodes.find((n) => cls(n) === 'cv-set-back')).includes('设置'))
 check('学习页标题 = 学习', text(lnodes.find((n) => cls(n) === 'cv-sub-title')).includes('学习'))
-check('学习页 3 行：词库 / 每日新词 / 发音口音', lrows.length === 3, lrows.map((r) => text(r).split(' ')[0]).join(' | '))
+check('学习页 6 行：词库 / 每日新词 / 发音口音 / 朗读内容 / 朗读范围 / 朗读例句', lrows.length === 6, lrows.map((r) => text(r).split(' ')[0]).join(' | '))
+const readExRow = lrows.find((r) => text(r).includes('朗读例句'))
+check('朗读例句行是开关', !!readExRow && walk(readExRow).some((n) => cls(n).includes('cv-switch')),
+  readExRow ? 'switch' : 'missing')
+const readExHint = lnodes.find((n) => cls(n).includes('cv-read-ex-hint'))
+check('朗读例句开关下有无例句提示', !!readExHint && text(readExHint).includes('暂无例句'), readExHint ? text(readExHint) : 'missing')
+const readModeRow = lrows.find((r) => text(r).includes('朗读内容'))
+check('朗读内容行 3 个选项', !!readModeRow && walk(readModeRow).filter((n) => n.type === 'button').length === 3,
+  String(readModeRow ? walk(readModeRow).filter((n) => n.type === 'button').length : -1))
+const readRangeRow = lrows.find((r) => text(r).includes('朗读范围'))
+const rangeSel = readRangeRow && walk(readRangeRow).find((n) => n.type === 'select')
+check('朗读范围行是下拉框且回填 d7', !!rangeSel && rangeSel.props.value === 'd7', rangeSel ? String(rangeSel.props.value) : 'no select')
+check('朗读范围有 6 个选项（含新学词）', !!rangeSel && walk(rangeSel).filter((n) => n.type === 'option').length === 6,
+  String(rangeSel ? walk(rangeSel).filter((n) => n.type === 'option').length : -1))
 const dailyRow = lrows.find((r) => text(r).includes('每日新词'))
 check('每日新词行内含数字输入框', !!dailyRow && walk(dailyRow).some((n) => n.type === 'input'))
 const numInput = dailyRow && walk(dailyRow).find((n) => n.type === 'input')
