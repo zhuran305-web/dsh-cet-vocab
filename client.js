@@ -1722,18 +1722,27 @@ const CSS = `
 }
 .cv-reader:hover { filter: brightness(1.06); }
 .cv-read-ex-hint { text-align: left; padding: 0 0 2px 102px; margin-top: -2px; }
-.cv-reader--incluster { position: static; } /* flex child of the pill cluster */
+/* relative (not static): stays a normal flex item of the cluster, but is
+   again the containing block for the ::after sound-wave ring — otherwise the
+   ring anchors to the whole cluster (toggle + pill) when collapsed.
+   inset:auto clears the base .cv-reader right/top offsets: under relative
+   they would otherwise shift the toggle 24px left / 88px down out of the row. */
+.cv-reader--incluster { position: relative; inset: auto; }
 .cv-reader--above { top: 50px; }
 .cv-reader--on {
   background: var(--cv-accent, var(--dsw-alias-brand-primary));
   color: var(--cv-accent-fg, #fff); border-color: transparent;
 }
-/* Static status ring instead of a perpetual pulse: an always-running
-   compositor animation is the one thing here that cost frames forever. */
+/* Sound-wave ring while the reader is on — the one intentional ambient
+   animation (transform + opacity only, cheap on the compositor). */
 .cv-reader--on::after {
-  content: ''; position: absolute; inset: -4px; border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 45%, transparent);
-  pointer-events: none;
+  content: ''; position: absolute; inset: -5px; border-radius: 50%;
+  border: 2px solid var(--cv-accent, var(--dsw-alias-brand-primary));
+  animation: cv-pulse 1.6s ease-out infinite; pointer-events: none;
+}
+@keyframes cv-pulse {
+  from { transform: scale(.78); opacity: .55; }
+  to { transform: scale(1.28); opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .cv-root *, .cv-root *::before, .cv-root *::after {

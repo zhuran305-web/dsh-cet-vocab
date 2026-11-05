@@ -30,16 +30,20 @@ check('源码含 audioWait / readerSpeakEng / readerLoop',
 check('store.answer 记录 last/first（范围过滤 + 新学按天可分）',
   src.includes('e.last = now') && src.includes('e.first = now'))
 check('CSS 含 .cv-reader 开关样式', /\.cv-reader \{/.test(src))
-check('CSS 含开启态与静态状态环（无常驻动画）',
+check('CSS 含开启态与声波脉冲环',
   src.includes('.cv-reader--on') && src.includes('.cv-reader--on::after') &&
-  !src.includes('@keyframes cv-pulse') && src.includes('prefers-reduced-motion'))
+  src.includes('@keyframes cv-pulse') && src.includes('prefers-reduced-motion'))
 check('设计令牌与统一圆角/字号/过渡', src.includes('--cv-r-sm: 8px') &&
   src.includes('--cv-t-sm: 12.5px') && src.includes('--cv-ease'))
-check('无限动画已清零', !/animation:[^;]*infinite/.test(src))
+check('声波是唯一常驻动画（其余无 infinite）',
+  (src.match(/animation:[^;]*infinite/g) || []).length === 1)
 check('收起时开关在 pill 左侧同一簇，展开/关闭时独立浮动',
   src.includes("h(ReaderToggle, { inCluster: true })") &&
   /const floatToggle = collapsed \? null : h\(ReaderToggle, null\)/.test(src) &&
   /closest\('\.cv-cluster'\)/.test(src))
+check('收起态开关 relative + 清偏移（声波锚自身、且不被 right/top 推出簇）',
+  /\.cv-reader--incluster \{ position: relative; inset: auto; \}/.test(src) &&
+  !/\.cv-reader--incluster \{ position: static; \}/.test(src))
 check('speak() 接了 readerKick（手动发音让位）',
   /function speak\(word, accentOverride\) \{\n  readerKick\(\)/.test(src))
 check('settings 默认含 readOn/readRange/readMode',
@@ -90,11 +94,15 @@ class FakeAudio {
         return decodeURIComponent(s.split('audio=')[1] || '').split('&')[0]
       } catch (e) { return '' }
     })() })
+    // Real <audio> fires 'playing' within the first tick and only THEN
+    // continues to 'ended'. Emit it synchronously: the 4500ms start watchdog
+    // is timer-capped to 8ms in this harness, so a purely async 'playing'
+    // could lose the race to the watchdog under load and fall back to TTS.
+    if (audioMode === 'ok' || audioMode === 'slow') { if (el._playing) el._playing() }
     if (audioMode === 'ok') setTimeout(() => { if (!el.paused && el._ended) el._ended() }, 2)
     else if (audioMode === 'error') setTimeout(() => { if (!el.paused && el._error) el._error() }, 2)
     else if (audioMode === 'slow') {
       // 长录音：很快开始播放（应清掉启动看门狗），很久才真正结束
-      setTimeout(() => { if (!el.paused && el._playing) el._playing() }, 2)
       setTimeout(() => { if (!el.paused && el._ended) el._ended() }, 20)
     }
     return { catch() {} }

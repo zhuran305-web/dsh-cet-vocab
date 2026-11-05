@@ -59,6 +59,13 @@ Requirements: an authenticated `gh`, and an npm **granular access token with “
 
 ## Changelog / 更新记录
 
+### 0.2.4
+
+- **斩单词 / Cut** — 「⚔ 斩」不删除、不毕业：词转入记忆阶段 6 的低频维护池，按可配间隔（15/30/60 天）抽查，抽查答错自动打回阶段 1。统计页可查看「已斩」列表并随时召回，抽查词带「维护抽查」角标；循环朗读默认排除已斩词。Cut words move to a low-frequency maintenance pool (memory stage 6) with configurable 15/30/60-day checks instead of being deleted; a failed check returns the word to stage 1. A cut list with recall, a maintenance-check badge, and reader filtering are included.
+- **界面精修 / UI polish** — 设计令牌统一间距/圆角/字号/过渡，减少重复边框，统一焦点与按压反馈，`prefers-reduced-motion` 守卫；保留朗读开关的声波环并修复其定位漂移。Design tokens, fewer borders, consistent focus/press feedback, reduced-motion guard, and the sound-wave ring anchored correctly to the reader toggle.
+- **例句朗读双渠道 / Example sentences** — 词典 API 与 Tatoeba 语料库回落，无例句自动跳过。Dictionary API with Tatoeba corpus fallback; words without examples are skipped silently.
+- **选择题 / Quiz** — 答完四个选项都显示对应单词，反馈条只显示判定不再重复释义。All four option words appear after answering; the verdict line no longer repeats the definition.
+
 ### 0.2.2
 
 - **Keyboard shortcuts / 快捷键** — `Alt+Q` shows or hides the window (works even while typing), `Alt+1` / `Alt+2` switch card vs. quiz, `Alt+R` review, `Alt+P` extra practice, `Alt+X` exit practice, `Alt+S` speak the word; `Space` flips, `1/2/3` grade, `1–4` answer, `→` moves to the next word. Bare keys stay inert while a text field has focus or the window is closed, and any key the host already handled is left alone. The full list is in Settings. 全套快捷键，设置页附键位指南。
