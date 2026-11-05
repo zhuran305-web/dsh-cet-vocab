@@ -17,7 +17,7 @@ const FILE = path.join(pkgDir, 'client.src.js')
 const src = fs.readFileSync(FILE, 'utf8')
 
 // ---- extract the component ------------------------------------------------
-const START = 'function QuizView({ card, isNew, state, onGrade }) {'
+const START = 'function QuizView('
 const at = src.indexOf(START)
 if (at < 0) throw new Error('QuizView not found')
 const tail = src.indexOf('\n}\n', at)
@@ -236,9 +236,14 @@ const byClass = (tree, cls) => findAll(tree, (n) => String(n.props.className || 
   const fb = byClass(view.tree, 'cv-feedback')
   check('有反馈条', fb.length === 1)
   check('反馈条带错误样式', fb.length === 1 && String(fb[0].props.className).includes('cv-feedback--no'))
-  check('反馈条显示完整释义', fb.length === 1 && textOf(fb[0]).includes('屈从于'),
+  check('反馈条只有判定、不重复显示单词释义（选项里已有）',
+    fb.length === 1 && textOf(fb[0]).includes('答错了') && !textOf(fb[0]).includes('屈从于') &&
+    !textOf(fb[0]).includes('放弃'),
     fb.length ? textOf(fb[0]).slice(0, 40) : '')
-  check('反馈条不截断释义', fb.length === 1 && !textOf(fb[0]).includes('…'))
+  const answeredOpts = optsOf(view.tree)
+  check('答错后四个选项都附上单词', answeredOpts.length === 4 &&
+    answeredOpts.every((o) => /\s—\s\S+/.test(textOf(o))),
+    answeredOpts.map(textOf).join(' | ').slice(0, 160))
 
   const nextBtn = byClass(view.tree, 'cv-nextbtn')
   check('答错后有「下一个」按钮', nextBtn.length === 1)
@@ -268,6 +273,9 @@ const byClass = (tree, cls) => findAll(tree, (n) => String(n.props.className || 
   check('找到正确选项', !!right)
   right.props.onClick()
   check('答对后还没评分', graded.length === 0, JSON.stringify(graded))
+  check('答对后四个选项也都附上单词', optsOf(view.tree).length === 4 &&
+    optsOf(view.tree).every((o) => /\s—\s\S+/.test(textOf(o))),
+    optsOf(view.tree).map(textOf).join(' | ').slice(0, 160))
   check('答对后有 1.2s 定时器', w.pending() === 1, `pending=${w.pending()}`)
   w.flush()
   check('答对后自动前进', graded.length === 1 && graded[0] === GRADE_KNOW, JSON.stringify(graded))

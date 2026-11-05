@@ -104,5 +104,20 @@
   "readerOff": "Loop-read words",
   "readEmpty": "No learned words yet — learn a few first",
   "settingsReadExample": "Read example sentences",
-  "readExampleHint": "Some words have no examples yet — skipped automatically"
+  "readExampleHint": "Some words have no examples yet — skipped automatically",
+  "cut": "Cut",
+  "cutHint": "I know this: move to low-frequency maintenance, checked later",
+  "cutFlash": "⚔ Cut — moved to low-frequency maintenance (a miss sends it back)",
+  "cutCount": "Cut",
+  "cutList": "Cut words",
+  "cutListHint": "These are out of the daily queue and return for a long-interval check; a miss sends one back to stage 1, or recall it any time.",
+  "cutRecall": "Recall",
+  "cutDaysLabel": "Check gap (days)",
+  "cutDaysHint": "Cut words are checked every N days; a failed check sends the word back to stage 1.",
+  "readRangeCut": "Cut words only",
+  "scCut": "Cut the current word",
+  "hintCardCut": "Space reveal · 1/2/3 grade · 4 cut",
+  "maint": "Maintenance check",
+  "maintHint": "A cut word returns for one long-interval check; a miss sends it back to stage 1",
+  "cutHoldNext": "Cut — continue"
 }

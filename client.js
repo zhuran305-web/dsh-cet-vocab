@@ -32,6 +32,10 @@ const GRADE_MISS = 0
 const GRADE_FUZZY = 1
 const GRADE_KNOW = 2
 const GRADUATED_BOX = 6
+// 「斩」不是删除：词转入低频维护池（记忆阶段6 / box 5），按可配的间隔抽查。
+const CUT_BOX = 5
+const CUT_DAYS = { d15: 15, d30: 30, d60: 60 }
+const cutDays = (v) => CUT_DAYS[v] || 30
 
 // -------------------------------------------------------------------- utils
 
@@ -249,6 +253,14 @@ function dayStart() {
 function readerQueue(state) {
   const book = visibleWords(state.settings.book)
   const out = []
+  if (state.settings.readRange === 'cut') {
+    for (const e of book) {
+      const st = state.words[e.w]
+      if (st && st.cut) out.push(e)
+    }
+    out.sort((a, b) => (state.words[b.w].cutAt || 0) - (state.words[a.w].cutAt || 0))
+    return out
+  }
   if (state.settings.readRange === 'new') {
     const from = dayStart() - 86400000 // yesterday 00:00 local
     for (const e of book) {
@@ -262,7 +274,7 @@ function readerQueue(state) {
   const from = days > 0 ? dayStart() - (days - 1) * 86400000 : 0
   for (const e of book) {
     const st = state.words[e.w]
-    if (!st) continue
+    if (!st || st.cut) continue // 循环朗读默认排除已斩词（另有「只读已斩」档）
     if (from && !(st.last >= from)) continue // 'all' also admits pre-`last` words
     out.push(e)
   }
@@ -1038,8 +1050,8 @@ function confusionScore(w, c) {
 function defaultState() {
   return {
     v: 1,
-    settings: { book: 'cet4', dailyNew: 10, autoSpeak: false, speakOnOpen: false, mode: 'card', autoOpen: true, appearance: 'auto', accent: 'auto', voice: '', readOn: false, readRange: 'd2', readMode: 'wt', readHead: 0, readExample: false },
-    words: {}, // word -> { box, due, seen, last, first, ok, fz, no }
+    settings: { book: 'cet4', dailyNew: 10, autoSpeak: false, speakOnOpen: false, mode: 'card', autoOpen: true, appearance: 'auto', accent: 'auto', voice: '', readOn: false, readRange: 'd2', readMode: 'wt', readHead: 0, readExample: false, cutDays: 'd30' },
+    words: {}, // word -> { box, due, seen, last, first, cut, cutAt, ok, fz, no }
     today: { date: todayStr(), newDone: 0, reviewDone: 0 },
     streak: 0,
     lastDay: '',
@@ -1144,7 +1156,21 @@ const store = {
       const isNew = !s.words[word]
       const prev = s.words[word] || { box: 0, due: 0, seen: 0, last: 0, ok: 0, fz: 0, no: 0 }
       const e = { ...prev }
-      if (grade === GRADE_KNOW) {
+      // 斩词的抽查：答对继续低频维护，答错打回阶段1 重走艾宾浩斯。
+      // 维护到期前它根本不会进队列，所以这里只可能是抽查那一次作答。
+      if (e.cut) {
+        if (grade === GRADE_MISS) {
+          e.cut = false
+          e.cutAt = 0
+          e.box = 0
+          e.due = now + INTERVALS_MIN[0] * 60000
+          e.no++
+        } else {
+          e.box = CUT_BOX
+          e.due = now + cutDays(s.settings.cutDays) * 86400000
+          e.ok++
+        }
+      } else if (grade === GRADE_KNOW) {
         e.box = Math.min((prev.box || 0) + 1, GRADUATED_BOX)
         e.due = e.box >= GRADUATED_BOX ? 0 : now + INTERVALS_MIN[e.box] * 60000
         e.ok++
@@ -1171,6 +1197,26 @@ const store = {
       }
     })
   },
+  /** 斩：转入低频维护池（记忆阶段6），不删除、不毕业。 */
+  cutWord(word) {
+    const now = Date.now()
+    store.set((s) => {
+      const st = s.words[word] || { box: 0, due: 0, seen: 0, last: 0, ok: 0, fz: 0, no: 0 }
+      s.words = { ...s.words, [word]: {
+        ...st, box: CUT_BOX, cut: true, cutAt: now,
+        due: now + cutDays(s.settings.cutDays) * 86400000, seen: st.seen + 1, last: now,
+        first: st.first || now,
+      } }
+    })
+  },
+  /** 召回：清掉斩标记，回到阶段6 的常规复习节奏。 */
+  uncutWord(word) {
+    store.set((s) => {
+      const st = s.words[word]
+      if (!st || !st.cut) return
+      s.words = { ...s.words, [word]: { ...st, cut: false, cutAt: 0, due: 0 } }
+    })
+  },
   startPractice(kind) {
     const now = Date.now()
     store.set((s) => {
@@ -1180,7 +1226,7 @@ const store = {
         picks = list
           .filter((e) => {
             const st = s.words[e.w]
-            return st && st.box < GRADUATED_BOX && st.due > now
+            return st && !st.cut && st.box < GRADUATED_BOX && st.due > now
           })
           .sort((a, b) => s.words[a.w].due - s.words[b.w].due)
           .slice(0, 20)
@@ -1229,6 +1275,11 @@ function buildQueue(state, now) {
   for (const e of list) {
     const st = state.words[e.w]
     if (!st || st.box >= GRADUATED_BOX) continue
+    if (st.cut) {
+      // 斩词只在维护抽查到期时回来一次，且不占「稍后到期」计数。
+      if (st.due <= now) reviews.push(e)
+      continue
+    }
     if (st.due <= now) reviews.push(e)
     else dueLaterCount++
   }
@@ -1254,31 +1305,41 @@ function pickCard(state, now, queue) {
   if (practice) {
     const w = practice.words[practice.i]
     const e = w ? BOOK_INDEX.entry(w) : null
-    return { card: e || null, isNew: e ? !state.words[w] : false }
+    return { card: e || null, isNew: e ? !state.words[w] : false, maintenance: false }
   }
   const q = queue || buildQueue(state, now)
   const card = q.reviews[0] || q.fresh[0] || null
-  return { card, isNew: card ? !state.words[card.w] : false }
+  const st = card ? state.words[card.w] : null
+  // 斩词到期回来那一次 = 维护抽查，卡片上给个角标解释「这词不是斩了吗」。
+  return { card, isNew: card ? !state.words[card.w] : false, maintenance: !!(st && st.cut && st.due <= now) }
 }
 
 function bookStats(state) {
   const list = visibleWords(state.settings.book)
-  let seen = 0, learning = 0, graduated = 0
+  let seen = 0, learning = 0, graduated = 0, cut = 0
   const boxes = [0, 0, 0, 0, 0, 0]
   for (const e of list) {
     const st = state.words[e.w]
     if (!st) continue
     seen++
+    if (st.cut) { cut++; continue } // 「已斩」单独成池，不污染阶段分布
     if (st.box >= GRADUATED_BOX) graduated++
     else { learning++; if (st.box >= 0 && st.box < 6) boxes[st.box]++ }
   }
-  return { total: list.length, seen, learning, graduated, boxes }
+  return { total: list.length, seen, learning, graduated, cut, boxes }
+}
+
+/** 当前词库里已斩的词（按最近斩的时间倒序），供统计页列表与召回。 */
+function cutWords(state) {
+  return visibleWords(state.settings.book)
+    .filter((e) => state.words[e.w] && state.words[e.w].cut)
+    .sort((a, b) => (state.words[b.w].cutAt || 0) - (state.words[a.w].cutAt || 0))
 }
 
 // ------------------------------------------------------------------- locale
 
-const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","settingsLearn":"学习","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","dailyPerDay":"{n} 词/天","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","resizeHint":"拖动改变大小 · 双击复位","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","quizNext":"下一个","quizStay":"答错会停在这里，按 → 或点「下一个」继续","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色","hintCard":"Space 显示释义 · 1/2/3 评分","scTitle":"快捷键","scToggle":"展开 / 收起悬浮窗","scModeCard":"切换到卡片模式","scModeQuiz":"切换到选择题模式","scSpeak":"朗读当前单词","scReveal":"显示释义","scGrade":"认识 / 模糊 / 不认识","scPick":"选择答案 1-4","scNext":"下一个词（答完题后）","scNote":"单键（Space、数字）只在窗口展开且光标不在输入框时生效；Alt 组合键在页面任何位置都能用。","scReview":"复习稍后到期的词（最多 20 个）","scExtra":"加练 10 个生词","scExit":"退出加练（加练中）","practiceNoReview":"暂时没有待复习的词","practiceNoExtra":"没有更多生词可以加练","readModeLabel":"朗读内容","readModeW":"只读单词","readModeWT":"词 + 翻译","readModeWTW":"词→译→词","readRangeLabel":"朗读范围","readRangeToday":"今天","readRangeYd":"今天和昨天","readRangeNew":"新学词（昨天起）","readRangeD3":"最近 3 天","readRangeD7":"最近 7 天","readRangeAll":"全部已学","readerOn":"停止循环朗读","readerOff":"循环朗读单词","readEmpty":"还没有已学的词，先学几个再听","settingsReadExample":"朗读例句","readExampleHint":"部分单词暂无例句，将自动跳过"}
-const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","settingsLearn":"Learning","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","dailyPerDay":"{n} / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","resizeHint":"Drag to resize · double-click to reset","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","quizNext":"Next","quizStay":"Wrong answers stay put — press → to continue","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark","hintCard":"Space reveal · 1/2/3 grade","scTitle":"Keyboard shortcuts","scToggle":"Expand / collapse the window","scModeCard":"Switch to card mode","scModeQuiz":"Switch to quiz mode","scSpeak":"Speak the current word","scReveal":"Reveal the meaning","scGrade":"Known / Fuzzy / Miss","scPick":"Pick an answer (1-4)","scNext":"Next word (after answering)","scNote":"Single keys (Space, digits) work only while the window is expanded and the caret is not in a text field; Alt combos work anywhere on the page.","scReview":"Review words due later (up to 20)","scExtra":"Practise 10 new words","scExit":"Exit practice (while practising)","practiceNoReview":"Nothing due for review yet","practiceNoExtra":"No more new words to practise","readModeLabel":"Read aloud","readModeW":"Word only","readModeWT":"Word + meaning","readModeWTW":"Word → meaning → word","readRangeLabel":"Range","readRangeToday":"Today","readRangeYd":"Today & yesterday","readRangeNew":"Newly learned","readRangeD3":"Last 3 days","readRangeD7":"Last 7 days","readRangeAll":"All learned","readerOn":"Stop loop reading","readerOff":"Loop-read words","readEmpty":"No learned words yet — learn a few first","settingsReadExample":"Read example sentences","readExampleHint":"Some words have no examples yet — skipped automatically"}
+const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","settingsLearn":"学习","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","dailyPerDay":"{n} 词/天","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","resizeHint":"拖动改变大小 · 双击复位","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","quizNext":"下一个","quizStay":"答错会停在这里，按 → 或点「下一个」继续","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色","hintCard":"Space 显示释义 · 1/2/3 评分","scTitle":"快捷键","scToggle":"展开 / 收起悬浮窗","scModeCard":"切换到卡片模式","scModeQuiz":"切换到选择题模式","scSpeak":"朗读当前单词","scReveal":"显示释义","scGrade":"认识 / 模糊 / 不认识","scPick":"选择答案 1-4","scNext":"下一个词（答完题后）","scNote":"单键（Space、数字）只在窗口展开且光标不在输入框时生效；Alt 组合键在页面任何位置都能用。","scReview":"复习稍后到期的词（最多 20 个）","scExtra":"加练 10 个生词","scExit":"退出加练（加练中）","practiceNoReview":"暂时没有待复习的词","practiceNoExtra":"没有更多生词可以加练","readModeLabel":"朗读内容","readModeW":"只读单词","readModeWT":"词 + 翻译","readModeWTW":"词→译→词","readRangeLabel":"朗读范围","readRangeToday":"今天","readRangeYd":"今天和昨天","readRangeNew":"新学词（昨天起）","readRangeD3":"最近 3 天","readRangeD7":"最近 7 天","readRangeAll":"全部已学","readerOn":"停止循环朗读","readerOff":"循环朗读单词","readEmpty":"还没有已学的词，先学几个再听","settingsReadExample":"朗读例句","readExampleHint":"部分单词暂无例句，将自动跳过","cut":"斩","cutHint":"确定会了：转入低频维护池，30 天后抽查","cutFlash":"⚔ 已斩，转入低频维护（答错会自动打回重学）","cutCount":"已斩","cutList":"已斩单词","cutListHint":"这些词已退出日常队列，按维护间隔抽查；答错会自动打回重学，也可以随时召回。","cutRecall":"召回","cutDaysLabel":"斩词抽查(天)","cutDaysHint":"斩掉的词每隔这些天抽查一次；抽查答错自动回到阶段 1 重学。","readRangeCut":"只读已斩词","scCut":"斩掉当前单词","hintCardCut":"Space 显示释义 · 1/2/3 评分 · 4 斩","maint":"维护抽查","maintHint":"已斩的词到期回来抽查一次；答错会自动打回阶段 1 重学","cutHoldNext":"已斩，继续"}
+const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","settingsLearn":"Learning","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","dailyPerDay":"{n} / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","resizeHint":"Drag to resize · double-click to reset","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","quizNext":"Next","quizStay":"Wrong answers stay put — press → to continue","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark","hintCard":"Space reveal · 1/2/3 grade","scTitle":"Keyboard shortcuts","scToggle":"Expand / collapse the window","scModeCard":"Switch to card mode","scModeQuiz":"Switch to quiz mode","scSpeak":"Speak the current word","scReveal":"Reveal the meaning","scGrade":"Known / Fuzzy / Miss","scPick":"Pick an answer (1-4)","scNext":"Next word (after answering)","scNote":"Single keys (Space, digits) work only while the window is expanded and the caret is not in a text field; Alt combos work anywhere on the page.","scReview":"Review words due later (up to 20)","scExtra":"Practise 10 new words","scExit":"Exit practice (while practising)","practiceNoReview":"Nothing due for review yet","practiceNoExtra":"No more new words to practise","readModeLabel":"Read aloud","readModeW":"Word only","readModeWT":"Word + meaning","readModeWTW":"Word → meaning → word","readRangeLabel":"Range","readRangeToday":"Today","readRangeYd":"Today & yesterday","readRangeNew":"Newly learned","readRangeD3":"Last 3 days","readRangeD7":"Last 7 days","readRangeAll":"All learned","readerOn":"Stop loop reading","readerOff":"Loop-read words","readEmpty":"No learned words yet — learn a few first","settingsReadExample":"Read example sentences","readExampleHint":"Some words have no examples yet — skipped automatically","cut":"Cut","cutHint":"I know this: move to low-frequency maintenance, checked later","cutFlash":"⚔ Cut — moved to low-frequency maintenance (a miss sends it back)","cutCount":"Cut","cutList":"Cut words","cutListHint":"These are out of the daily queue and return for a long-interval check; a miss sends one back to stage 1, or recall it any time.","cutRecall":"Recall","cutDaysLabel":"Check gap (days)","cutDaysHint":"Cut words are checked every N days; a failed check sends the word back to stage 1.","readRangeCut":"Cut words only","scCut":"Cut the current word","hintCardCut":"Space reveal · 1/2/3 grade · 4 cut","maint":"Maintenance check","maintHint":"A cut word returns for one long-interval check; a miss sends it back to stage 1","cutHoldNext":"Cut — continue"}
 
 let localeBinder = null
 const t = (key) => {
@@ -1291,18 +1352,30 @@ const t = (key) => {
 // ---------------------------------------------------------------------- CSS
 
 const CSS = `
+/* Design tokens — one source of truth for spacing, radii, type and motion.
+   Apple HIG / modern community practice: hierarchy comes from size, weight,
+   color and whitespace; borders are the exception, not the rule. */
 .cv-root, .cv-root * { box-sizing: border-box; }
 .cv-root {
   font-size: 14px; line-height: 1.5;
   color: var(--cv-text, var(--dsw-alias-label-primary));
   font-family: inherit;
+  --cv-sp-1: 4px;  --cv-sp-2: 8px;  --cv-sp-3: 12px; --cv-sp-4: 16px; --cv-sp-5: 24px;
+  --cv-r-sm: 8px;  --cv-r-md: 12px; --cv-r-lg: 18px;
+  --cv-t-xs: 11px; --cv-t-sm: 12.5px; --cv-t-md: 14px; --cv-t-lg: 28px;
+  --cv-ease: .18s ease;
+  -webkit-font-smoothing: antialiased;
+}
+.cv-root button, .cv-root select, .cv-root input { font-family: inherit; }
+.cv-root button:focus-visible, .cv-root select:focus-visible, .cv-root input:focus-visible {
+  outline: 2px solid var(--cv-accent, var(--dsw-alias-brand-primary)); outline-offset: 2px;
 }
 .cv-window {
   position: fixed; width: 384px; max-height: min(74vh, 660px);
   display: flex; flex-direction: column;
   background: var(--cv-surface, var(--dsw-alias-bg-overlay));
-  border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); border-radius: 14px;
-  box-shadow: 0 18px 48px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.12);
+  border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); border-radius: var(--cv-r-lg);
+  box-shadow: 0 16px 40px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.08);
   user-select: none;
 }
 /* Positioned from the left so the --cv-scale custom property can be folded
@@ -1314,177 +1387,230 @@ const CSS = `
   display: flex; align-items: flex-end; justify-content: flex-end;
   padding: 0 3px 3px 0; cursor: nwse-resize; touch-action: none;
   color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); opacity: .5;
-  border-bottom-right-radius: 14px;
+  border-bottom-right-radius: var(--cv-r-lg);
 }
 .cv-resize:hover, .cv-resize:active { opacity: 1; }
 .cv-resize > i {
   display: block; width: 9px; height: 9px;
   border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
-  border-bottom-right-radius: 2px;
+  border-bottom-right-radius: 3px;
 }
 .cv-head {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 10px 8px 14px; cursor: grab; touch-action: none;
+  display: flex; align-items: center; gap: var(--cv-sp-2);
+  padding: var(--cv-sp-3) var(--cv-sp-3) var(--cv-sp-2) var(--cv-sp-4);
+  cursor: grab; touch-action: none;
   border-bottom: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
 }
 .cv-head:active { cursor: grabbing; }
-.cv-head-title { font-weight: 600; font-size: 14px; }
+.cv-head-title { font-weight: 600; font-size: var(--cv-t-md); letter-spacing: .01em; }
 .cv-head-due {
-  font-size: 11px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
-  background: var(--cv-layer-2, var(--dsw-alias-bg-layer-1)); border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
-  border-radius: 999px; padding: 1px 8px;
+  font-size: var(--cv-t-xs); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
+  background: var(--cv-layer-2, var(--dsw-alias-bg-layer-1));
+  border-radius: 999px; padding: 1px var(--cv-sp-2);
 }
 .cv-head-spacer { flex: 1; }
 .cv-iconbtn {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; border-radius: 8px; border: none; cursor: pointer;
+  width: 26px; height: 26px; border-radius: var(--cv-r-sm); border: none; cursor: pointer;
   background: transparent; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
+  transition: background var(--cv-ease), color var(--cv-ease);
 }
 .cv-iconbtn:hover { background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); color: var(--cv-text, var(--dsw-alias-label-primary)); }
-.cv-tabs { display: flex; gap: 4px; padding: 8px 12px 0; }
+.cv-tabs { display: flex; gap: var(--cv-sp-1); padding: var(--cv-sp-2) var(--cv-sp-3) 0; }
 .cv-tab {
   flex: 1; text-align: center; padding: 6px 0; font-size: 13px; cursor: pointer;
-  border: none; border-radius: 8px; background: transparent; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
+  border: none; border-radius: var(--cv-r-sm); background: transparent;
+  color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
+  transition: background var(--cv-ease), color var(--cv-ease);
 }
 .cv-tab:hover { background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); }
 .cv-tab--on {
   background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); color: var(--cv-text, var(--dsw-alias-label-primary));
-  font-weight: 600; border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
+  font-weight: 600;
 }
-.cv-body { padding: 12px 14px 14px; overflow-y: auto; }
-.cv-today { display: flex; align-items: baseline; gap: 10px; font-size: 12px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); margin-bottom: 6px; }
+.cv-body { padding: var(--cv-sp-3) var(--cv-sp-4); overflow-y: auto; }
+.cv-today { display: flex; align-items: baseline; gap: 10px; font-size: var(--cv-t-xs); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); margin-bottom: 6px; }
 .cv-today b { color: var(--cv-text, var(--dsw-alias-label-primary)); font-weight: 600; }
-.cv-bar { height: 4px; border-radius: 999px; background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); overflow: hidden; margin-bottom: 12px; }
+.cv-bar { height: 4px; border-radius: 999px; background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); overflow: hidden; margin-bottom: var(--cv-sp-3); }
 .cv-bar > i { display: block; height: 100%; background: var(--cv-accent, var(--dsw-alias-brand-primary)); border-radius: 999px; transition: width .35s ease; }
+/* The card is the focal surface: no border, a slightly lifted layer and
+   generous padding do the work instead. */
 .cv-card {
-  background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
-  border-radius: 12px; padding: 18px 16px 16px; text-align: center; user-select: text;
+  background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1));
+  border-radius: var(--cv-r-md); padding: 22px var(--cv-sp-4) var(--cv-sp-4);
+  text-align: center; user-select: text; position: relative;
 }
-.cv-word { font-size: 28px; font-weight: 700; letter-spacing: .2px; word-break: break-word; }
-.cv-phon { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 4px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); font-size: 13px; min-height: 20px; }
+.cv-word { font-size: var(--cv-t-lg); font-weight: 700; letter-spacing: -.01em; line-height: 1.2; word-break: break-word; }
+.cv-phon { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: var(--cv-sp-1); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); font-size: 13px; min-height: 20px; }
 .cv-speak {
   border: none; background: transparent; cursor: pointer; color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
-  font-size: 14px; padding: 2px 6px; border-radius: 6px; line-height: 1;
+  font-size: var(--cv-t-md); padding: 2px 6px; border-radius: var(--cv-r-sm); line-height: 1;
+  transition: background var(--cv-ease);
 }
 .cv-speak:hover { background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); }
 .cv-meta { display: flex; justify-content: center; gap: 6px; margin-bottom: 10px; }
 .cv-chip {
-  font-size: 10.5px; padding: 1px 8px; border-radius: 999px; line-height: 1.6;
+  font-size: var(--cv-t-xs); padding: 1px var(--cv-sp-2); border-radius: 999px; line-height: 1.6;
   background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 12%, transparent);
   color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
 }
 .cv-chip--rev { background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
 .cv-chip--c6 { background: color-mix(in srgb, var(--cv-warn, var(--dsw-alias-state-warn-primary)) 14%, transparent); color: var(--cv-warn, var(--dsw-alias-state-warn-primary)); }
 .cv-meaning {
-  margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--cv-border-2, var(--dsw-alias-border-l2));
+  margin-top: var(--cv-sp-3); padding-top: var(--cv-sp-3);
+  border-top: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
   font-size: 15px; line-height: 1.7; text-align: left; white-space: pre-wrap;
   word-break: break-word; max-height: 180px; overflow-y: auto;
 }
 .cv-reveal {
-  width: 100%; margin-top: 14px; padding: 9px 0; font-size: 14px; font-weight: 600;
-  border: none; border-radius: 10px; cursor: pointer;
+  width: 100%; margin-top: var(--cv-sp-3); padding: 10px 0; font-size: var(--cv-t-md); font-weight: 600;
+  border: none; border-radius: var(--cv-r-sm); cursor: pointer;
   background: var(--cv-accent, var(--dsw-alias-brand-primary)); color: var(--cv-accent-fg, #fff);
+  transition: filter var(--cv-ease), transform var(--cv-ease);
 }
-.cv-reveal:hover { filter: brightness(1.08); }
-.cv-grades { display: flex; gap: 8px; margin-top: 14px; }
+.cv-reveal:hover { filter: brightness(1.06); }
+.cv-reveal:active { transform: scale(.985); }
+.cv-grades { display: flex; gap: var(--cv-sp-2); margin-top: var(--cv-sp-3); }
+.cv-grades--four { gap: 5px; }
 .cv-grade {
-  flex: 1; padding: 9px 0; font-size: 13.5px; font-weight: 600; cursor: pointer;
-  border-radius: 10px; border: 1px solid transparent;
+  flex: 1; padding: 9px 0; font-size: var(--cv-t-sm); font-weight: 600; cursor: pointer;
+  border-radius: var(--cv-r-sm); border: 1px solid transparent;
+  transition: filter var(--cv-ease), transform var(--cv-ease);
 }
+.cv-grade:active { transform: scale(.97); }
+/* A clearly visible cut action inside the card's top-right corner — in the
+   normal flow of the card (not an edge-overlapping absolute badge that the
+   scroll container can clip). Shown in BOTH card and quiz mode. */
+.cv-cut-chip {
+  position: absolute; right: 10px; top: 8px;
+  padding: 3px 9px; border-radius: var(--cv-r-sm); cursor: pointer; font-size: var(--cv-t-xs); font-weight: 600;
+  background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 10%, transparent);
+  color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
+  transition: background var(--cv-ease);
+}
+.cv-cut-chip:hover { background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 20%, transparent); }
+.cv-chip--maint {
+  background: color-mix(in srgb, var(--cv-warn, var(--dsw-alias-state-warn-primary)) 16%, transparent);
+  color: var(--cv-warn, var(--dsw-alias-state-warn-primary));
+}
+.cv-grade--cut {
+  background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 12%, transparent);
+  color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
+  white-space: nowrap;
+}
+.cv-tiles--five .cv-tile { padding: 8px; }
+.cv-cut-panel { margin-top: var(--cv-sp-3); padding-top: 10px; }
+.cv-cut-toggle {
+  width: 100%; text-align: left; border: none; background: transparent; cursor: pointer;
+  font: inherit; font-size: var(--cv-t-sm); font-weight: 600; padding: 4px 0;
+  color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
+}
+.cv-cut-list { max-height: 190px; overflow-y: auto; margin-top: 6px; }
+.cv-cut-hint { font-size: var(--cv-t-xs); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); line-height: 1.5; margin-bottom: 6px; }
+.cv-cut-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: var(--cv-t-xs); }
+.cv-cut-word { font-weight: 700; color: var(--cv-text, var(--dsw-alias-label-primary)); flex: none; max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+.cv-cut-meaning { flex: 1; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cv-cut-recall {
+  flex: none; border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); background: transparent;
+  border-radius: var(--cv-r-sm); padding: 2px 8px; font-size: var(--cv-t-xs); cursor: pointer;
+  color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
+  transition: border-color var(--cv-ease);
+}
+.cv-cut-recall:hover { border-color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); }
 .cv-grade--know {
   background: color-mix(in srgb, var(--cv-ok, var(--dsw-alias-state-success-primary)) 13%, transparent);
-  color: var(--cv-ok, var(--dsw-alias-state-success-primary)); border-color: color-mix(in srgb, var(--cv-ok, var(--dsw-alias-state-success-primary)) 32%, transparent);
+  color: var(--cv-ok, var(--dsw-alias-state-success-primary));
 }
 .cv-grade--fuzzy {
   background: color-mix(in srgb, var(--cv-warn, var(--dsw-alias-state-warn-primary)) 13%, transparent);
-  color: var(--cv-warn, var(--dsw-alias-state-warn-primary)); border-color: color-mix(in srgb, var(--cv-warn, var(--dsw-alias-state-warn-primary)) 32%, transparent);
+  color: var(--cv-warn, var(--dsw-alias-state-warn-primary));
 }
 .cv-grade--miss {
   background: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 13%, transparent);
-  color: var(--cv-err, var(--dsw-alias-state-error-primary)); border-color: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 32%, transparent);
+  color: var(--cv-err, var(--dsw-alias-state-error-primary));
 }
 .cv-grade:hover { filter: brightness(1.06); }
 .cv-done { text-align: center; padding: 26px 8px 18px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
 .cv-done-emoji { font-size: 34px; margin-bottom: 8px; }
 .cv-done-title { font-size: 15px; font-weight: 600; color: var(--cv-text, var(--dsw-alias-label-primary)); margin-bottom: 4px; }
-.cv-done-sub { font-size: 12.5px; }
-.cv-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-.cv-tile { background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); border-radius: 10px; padding: 10px 12px; }
-.cv-tile-num { font-size: 20px; font-weight: 700; }
-.cv-tile-label { font-size: 11.5px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); margin-top: 2px; }
-.cv-boxrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 11.5px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
+.cv-done-sub { font-size: var(--cv-t-sm); }
+.cv-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: var(--cv-sp-2); margin-bottom: var(--cv-sp-3); }
+.cv-tile { background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); border-radius: var(--cv-r-sm); padding: 10px var(--cv-sp-3); }
+.cv-tile-num { font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
+.cv-tile-label { font-size: var(--cv-t-xs); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); margin-top: 2px; }
+.cv-boxrow { display: flex; align-items: center; gap: var(--cv-sp-2); margin: 6px 0; font-size: var(--cv-t-xs); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
 .cv-boxrow-label { width: 76px; flex: none; }
 .cv-boxrow-bar { flex: 1; height: 6px; background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); border-radius: 999px; overflow: hidden; }
 .cv-boxrow-bar > i { display: block; height: 100%; background: var(--cv-accent, var(--dsw-alias-brand-primary)); opacity: .8; }
 .cv-boxrow-num { width: 34px; text-align: right; flex: none; }
-.cv-set-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); }
-.cv-set-row:last-of-type { border-bottom: none; }
+.cv-set-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
 .cv-set-label { font-size: 13px; width: 92px; flex: none; color: var(--cv-text, var(--dsw-alias-label-primary)); }
 .cv-set-entry {
-  display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 0;
-  border: none; border-bottom: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
-  background: transparent; color: var(--cv-text, var(--dsw-alias-label-primary));
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 0;
+  border: none; background: transparent; color: var(--cv-text, var(--dsw-alias-label-primary));
   font: inherit; font-size: 13px; cursor: pointer; text-align: left;
 }
+.cv-set-entry + .cv-set-row { border-top: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); }
 .cv-set-entry:hover .cv-set-label { color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); }
 .cv-set-value {
-  margin-left: auto; font-size: 11.5px; text-align: right;
+  margin-left: auto; font-size: var(--cv-t-xs); text-align: right;
   color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
 }
 .cv-set-chevron { flex: none; font-size: 15px; line-height: 1; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
 .cv-sub-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding-bottom: 8px; border-bottom: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
+  display: flex; align-items: center; justify-content: space-between; gap: var(--cv-sp-2);
+  padding-bottom: 10px; border-bottom: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
 }
 .cv-set-back {
-  border: none; background: transparent; padding: 2px 6px 2px 0; font: inherit; font-size: 12.5px;
+  border: none; background: transparent; padding: 2px 6px 2px 0; font: inherit; font-size: var(--cv-t-sm);
   cursor: pointer; color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
 }
 .cv-set-back:hover { filter: brightness(1.12); }
-.cv-sub-title { font-size: 12.5px; font-weight: 600; color: var(--cv-text, var(--dsw-alias-label-primary)); }
+.cv-sub-title { font-size: var(--cv-t-sm); font-weight: 600; color: var(--cv-text, var(--dsw-alias-label-primary)); }
 .cv-set-row .cv-numinput--inline { width: 62px; flex: none; }
-.cv-sc-flat { padding-top: 8px; }
+.cv-sc-flat { padding-top: var(--cv-sp-2); }
 
-.cv-seg { display: flex; flex: 1; gap: 4px; background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); border-radius: 9px; padding: 3px; }
+.cv-seg { display: flex; flex: 1; gap: var(--cv-sp-1); background: var(--cv-layer-2, var(--dsw-alias-bg-layer-1)); border-radius: var(--cv-r-sm); padding: 3px; }
 .cv-seg button {
   flex: 1; border: none; background: transparent; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
-  font-size: 12.5px; padding: 5px 0; border-radius: 7px; cursor: pointer;
+  font-size: var(--cv-t-sm); padding: 5px 0; border-radius: var(--cv-r-sm); cursor: pointer;
+  transition: background var(--cv-ease), color var(--cv-ease);
 }
 .cv-seg button:hover { color: var(--cv-text, var(--dsw-alias-label-primary)); }
-.cv-seg button.cv-on { background: var(--cv-surface, var(--dsw-alias-bg-overlay)); color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+.cv-seg button.cv-on { background: var(--cv-surface, var(--dsw-alias-bg-overlay)); color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
 .cv-switch {
   position: relative; width: 40px; height: 22px; border-radius: 999px; border: none; cursor: pointer;
-  background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); transition: background .2s ease; flex: none;
+  background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); transition: background var(--cv-ease); flex: none;
 }
 .cv-switch > i {
   position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
   background: var(--cv-surface, var(--dsw-alias-bg-overlay)); box-shadow: 0 1px 3px rgba(0,0,0,.25);
-  transition: left .2s ease;
+  transition: left var(--cv-ease);
 }
 .cv-switch--on { background: var(--cv-accent, var(--dsw-alias-brand-primary)); }
 .cv-switch--on > i { left: 21px; }
-.cv-sc { margin-top: 14px; padding-top: 11px; border-top: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); }
-.cv-sc-title { font-size: 12.5px; font-weight: 600; color: var(--cv-text, var(--dsw-alias-label-primary)); margin-bottom: 8px; }
+.cv-sc { margin-top: var(--cv-sp-3); padding-top: 11px; }
+.cv-sc-title { font-size: var(--cv-t-sm); font-weight: 600; color: var(--cv-text, var(--dsw-alias-label-primary)); margin-bottom: var(--cv-sp-2); }
 .cv-sc-row { display: flex; align-items: center; gap: 9px; padding: 3px 0; }
 .cv-sc-keys { display: flex; gap: 3px; flex: none; width: 96px; }
 .cv-sc-keys kbd {
-  font: inherit; font-size: 10.5px; line-height: 1; padding: 4px 6px; border-radius: 6px;
+  font: inherit; font-size: var(--cv-t-xs); line-height: 1; padding: 4px 6px; border-radius: var(--cv-r-sm);
   background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); color: var(--cv-text, var(--dsw-alias-label-primary));
-  border: 1px solid var(--cv-border-2, var(--dsw-alias-border-l1)); box-shadow: 0 1px 0 rgba(0,0,0,.2);
 }
-.cv-sc-desc { font-size: 11.5px; line-height: 1.35; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
-.cv-sc-note { margin-top: 7px; font-size: 10.5px; line-height: 1.4; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
+.cv-sc-desc { font-size: var(--cv-t-xs); line-height: 1.4; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
+.cv-sc-note { margin-top: 7px; font-size: var(--cv-t-xs); line-height: 1.4; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); }
 .cv-resetbtn {
-  width: 100%; margin-top: 12px; padding: 8px 0; font-size: 13px; cursor: pointer; border-radius: 10px;
+  width: 100%; margin-top: var(--cv-sp-3); padding: 8px 0; font-size: 13px; cursor: pointer; border-radius: var(--cv-r-sm);
   border: 1px solid color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 40%, transparent);
   color: var(--cv-err, var(--dsw-alias-state-error-primary)); background: transparent;
+  transition: background var(--cv-ease);
 }
 .cv-resetbtn:hover { background: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 10%, transparent); }
-.cv-foot { margin-top: 12px; font-size: 11px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); text-align: center; }
+.cv-foot { margin-top: var(--cv-sp-3); font-size: var(--cv-t-xs); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); text-align: center; }
 /* Collapsed cluster: reader toggle on the LEFT of the pill — one connected
    group that is grabbed and dragged as a whole, so the toggle follows live. */
 .cv-cluster {
-  position: fixed; display: flex; align-items: center; gap: 8px;
+  position: fixed; display: flex; align-items: center; gap: var(--cv-sp-2);
   user-select: none; z-index: 3;
 }
 .cv-cluster--default { right: 24px; top: 88px; }
@@ -1492,80 +1618,72 @@ const CSS = `
   display: flex; align-items: center; gap: 7px;
   padding: 9px 15px; border-radius: 999px; border: none; cursor: grab; touch-action: none;
   background: var(--cv-accent, var(--dsw-alias-brand-primary)); color: var(--cv-accent-fg, #fff); font-size: 13.5px; font-weight: 600;
-  box-shadow: 0 8px 22px rgba(0,0,0,.28); user-select: none;
+  box-shadow: 0 8px 20px rgba(0,0,0,.22); user-select: none;
+  transition: filter var(--cv-ease);
 }
 .cv-pill:active { cursor: grabbing; }
 .cv-mode-row { display: flex; gap: 6px; margin-bottom: 10px; }
 .cv-mode-btn {
-  flex: 1; padding: 6px 0; font-size: 12.5px; cursor: pointer; border-radius: 8px;
-  border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); background: transparent; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
+  flex: 1; padding: 6px 0; font-size: var(--cv-t-sm); cursor: pointer; border-radius: var(--cv-r-sm);
+  border: none; background: transparent; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
+  transition: background var(--cv-ease), color var(--cv-ease);
 }
-.cv-mode-btn--on { background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); font-weight: 600; border-color: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 30%, transparent); }
+.cv-mode-btn--on { background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); font-weight: 600; }
 .cv-practice {
-  display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding: 7px 10px;
+  display: flex; align-items: center; gap: var(--cv-sp-2); margin-bottom: 10px; padding: 7px 10px;
   background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 28%, transparent);
-  border-radius: 10px; font-size: 12.5px; color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
+  border-radius: var(--cv-r-sm); font-size: var(--cv-t-sm); color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
 }
-.cv-practice-x { margin-left: auto; border: none; background: transparent; color: inherit; cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 6px; }
+.cv-practice-x { margin-left: auto; border: none; background: transparent; color: inherit; cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: var(--cv-r-sm); }
 .cv-practice-x:hover { background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 16%, transparent); }
-.cv-quiz-opts { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.cv-quiz-opts { display: flex; flex-direction: column; gap: var(--cv-sp-2); margin-top: var(--cv-sp-3); }
 .cv-opt {
   text-align: left; padding: 10px 12px; font-size: 13.5px; line-height: 1.45; cursor: pointer;
-  border-radius: 10px; border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
+  border-radius: var(--cv-r-sm); border: none;
   background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1)); color: var(--cv-text, var(--dsw-alias-label-primary));
+  transition: background var(--cv-ease), transform var(--cv-ease);
 }
 .cv-opt:hover { background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); }
+.cv-opt:active { transform: scale(.99); }
 .cv-opt--correct {
   background: color-mix(in srgb, var(--cv-ok, var(--dsw-alias-state-success-primary)) 14%, transparent);
-  border-color: color-mix(in srgb, var(--cv-ok, var(--dsw-alias-state-success-primary)) 45%, transparent);
   color: var(--cv-ok, var(--dsw-alias-state-success-primary)); font-weight: 600;
 }
 .cv-opt--wrong {
   background: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 12%, transparent);
-  border-color: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 45%, transparent);
   color: var(--cv-err, var(--dsw-alias-state-error-primary));
 }
-.cv-opt--dim { opacity: .45; pointer-events: none; }
+.cv-opt--dim { opacity: .72; pointer-events: none; }
 .cv-feedback {
-  margin-top: 12px; padding: 9px 12px; border-radius: 10px; font-size: 13px; line-height: 1.6;
+  margin-top: var(--cv-sp-3); padding: 9px 12px; border-radius: var(--cv-r-sm); font-size: 13px; line-height: 1.6;
   text-align: left; white-space: pre-wrap; word-break: break-word;
 }
 .cv-feedback--ok { background: color-mix(in srgb, var(--cv-ok, var(--dsw-alias-state-success-primary)) 10%, transparent); color: var(--cv-ok, var(--dsw-alias-state-success-primary)); }
 .cv-feedback--no { background: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 10%, transparent); color: var(--cv-err, var(--dsw-alias-state-error-primary)); }
-.cv-done-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
-.cv-actionbtn {
-  padding: 9px 0; font-size: 13.5px; font-weight: 600; cursor: pointer; border-radius: 10px;
+.cv-done-actions { display: flex; flex-direction: column; gap: var(--cv-sp-2); margin-top: var(--cv-sp-3); }
+.cv-actionbtn, .cv-nextbtn {
+  display: block; width: 100%; padding: 9px 0; font-size: 13px; font-weight: 600; cursor: pointer;
+  border-radius: var(--cv-r-sm);
   border: 1px solid color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 38%, transparent);
   background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 10%, transparent);
   color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
+  transition: filter var(--cv-ease), transform var(--cv-ease);
 }
-.cv-actionbtn:hover { filter: brightness(1.06); }
-.cv-nextbtn {
-  display: block; width: 100%; margin-top: 10px; padding: 8px 0;
-  font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 38%, transparent);
-  background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 12%, transparent);
-  color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
-}
-.cv-nextbtn:hover { filter: brightness(1.06); }
-.cv-numinput {
-  width: 76px; padding: 5px 8px; font-size: 13px; border-radius: 8px;
+.cv-nextbtn { margin-top: 10px; }
+.cv-actionbtn:hover, .cv-nextbtn:hover { filter: brightness(1.06); }
+.cv-actionbtn:active, .cv-nextbtn:active { transform: scale(.985); }
+.cv-numinput, .cv-select {
+  padding: 5px 8px; font-size: 13px; border-radius: var(--cv-r-sm);
   border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1)); background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1));
   color: var(--cv-text, var(--dsw-alias-label-primary)); outline: none;
 }
-.cv-numinput:focus { border-color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); }
+.cv-numinput { width: 76px; }
+.cv-numinput:focus, .cv-select:focus { border-color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); }
 .cv-voice { display: flex; flex: 1; gap: 6px; align-items: center; min-width: 0; }
-.cv-select {
-  flex: 1; min-width: 0; max-width: 100%; padding: 5px 6px; font-size: 12px;
-  border-radius: 8px; border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
-  background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1));
-  color: var(--cv-text, var(--dsw-alias-label-primary)); outline: none;
-}
-.cv-select:focus { border-color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); }
+.cv-select { flex: 1; min-width: 0; max-width: 100%; font-size: 12px; padding: 5px 6px; }
 .cv-voice-test {
   flex: none; width: 26px; height: 26px; padding: 0; font-size: 12px; line-height: 1;
-  border-radius: 7px; cursor: pointer;
+  border-radius: var(--cv-r-sm); cursor: pointer;
   border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
   background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1));
   color: var(--cv-text, var(--dsw-alias-label-primary));
@@ -1573,7 +1691,7 @@ const CSS = `
 .cv-voice-test:hover { border-color: var(--cv-accent-text, var(--dsw-alias-brand-primary)); }
 .cv-voice-empty { text-align: left; margin-top: 2px; padding: 0 0 8px 102px; line-height: 1.5; }
 .cv-voice-retry {
-  margin-top: 6px; padding: 3px 10px; font-size: 11.5px; cursor: pointer; border-radius: 7px;
+  margin-top: 6px; padding: 3px 10px; font-size: var(--cv-t-xs); cursor: pointer; border-radius: var(--cv-r-sm);
   border: 1px solid var(--cv-border-1, var(--dsw-alias-border-l1));
   background: var(--cv-layer-1, var(--dsw-alias-bg-layer-1));
   color: var(--cv-text, var(--dsw-alias-label-primary));
@@ -1583,11 +1701,11 @@ const CSS = `
 .cv-pill-badge {
   min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px;
   background: color-mix(in srgb, var(--cv-accent-fg, #fff) 30%, transparent);
-  font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+  font-size: var(--cv-t-xs); font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
 }
-.cv-hint { font-size: 11.5px; color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); text-align: center; margin-top: 10px; }
+.cv-hint { font-size: var(--cv-t-xs); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); text-align: center; margin-top: 10px; }
 .cv-flash {
-  margin-top: 10px; padding: 6px 10px; border-radius: 8px; text-align: center; font-size: 11.5px;
+  margin-top: 10px; padding: 6px 10px; border-radius: var(--cv-r-sm); text-align: center; font-size: var(--cv-t-xs);
   background: var(--cv-layer-2, var(--dsw-alias-bg-layer-2)); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
 }
 /* Ambient-reader toggle: a round button that rides next to the pill (window
@@ -1599,7 +1717,8 @@ const CSS = `
   border: 1px solid var(--cv-border-2, var(--dsw-alias-border-l2));
   background: var(--cv-surface, var(--dsw-alias-bg-overlay));
   color: var(--cv-text-secondary, var(--dsw-alias-label-secondary));
-  box-shadow: 0 6px 18px rgba(0,0,0,.2); user-select: none; z-index: 3;
+  box-shadow: 0 4px 14px rgba(0,0,0,.16); user-select: none; z-index: 3;
+  transition: filter var(--cv-ease), background var(--cv-ease);
 }
 .cv-reader:hover { filter: brightness(1.06); }
 .cv-read-ex-hint { text-align: left; padding: 0 0 2px 102px; margin-top: -2px; }
@@ -1609,14 +1728,18 @@ const CSS = `
   background: var(--cv-accent, var(--dsw-alias-brand-primary));
   color: var(--cv-accent-fg, #fff); border-color: transparent;
 }
+/* Static status ring instead of a perpetual pulse: an always-running
+   compositor animation is the one thing here that cost frames forever. */
 .cv-reader--on::after {
-  content: ''; position: absolute; inset: -5px; border-radius: 50%;
-  border: 2px solid var(--cv-accent, var(--dsw-alias-brand-primary));
-  animation: cv-pulse 1.6s ease-out infinite; pointer-events: none;
+  content: ''; position: absolute; inset: -4px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 45%, transparent);
+  pointer-events: none;
 }
-@keyframes cv-pulse {
-  from { transform: scale(.78); opacity: .55; }
-  to { transform: scale(1.28); opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .cv-root *, .cv-root *::before, .cv-root *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
 }
 `
 
@@ -1643,6 +1766,7 @@ const SC = {
   extra: { keys: ['Alt', 'P'], key: 'scExtra' },
   exit: { keys: ['Alt', 'X'], key: 'scExit' },
   speak: { keys: ['Alt', 'S'], key: 'scSpeak' },
+  cut: { keys: ['Alt', 'Z'], key: 'scCut' },
   reveal: { keys: ['Space'], key: 'scReveal' },
   grades: { keys: ['1', '2', '3'], key: 'scGrade' },
   pick: { keys: ['1', '2', '3', '4'], key: 'scPick' },
@@ -1650,7 +1774,7 @@ const SC = {
 }
 // Display order of the settings guide. SC is the single source of truth, so
 // the guide can never advertise a key the code does not actually handle.
-const SC_GUIDE = ['toggle', 'card', 'quiz', 'review', 'extra', 'exit', 'speak', 'reveal', 'grades', 'pick', 'next']
+const SC_GUIDE = ['toggle', 'card', 'quiz', 'review', 'extra', 'exit', 'speak', 'cut', 'reveal', 'grades', 'pick', 'next']
 
 // Would this key land in a text field? Without this guard Space would be
 // swallowed while the user types, and 1/2/3 would grade a card behind the
@@ -1849,14 +1973,19 @@ function PracticeBar({ practice }) {
   )
 }
 
-function CardView({ card, isNew, showing, onReveal, onGrade }) {
+function CardView({ card, isNew, showing, onReveal, onGrade, onCut, maintenance, holdMode, onHoldNext }) {
   // Warm the pronunciation mp3 while the learner reads the word.
   React.useEffect(() => { prefetchAudio(card.w) }, [card && card.w])
   return h('div', null,
     h('div', { className: 'cv-card' },
+      !holdMode && h('button', {
+        className: 'cv-cut-chip', title: t('cutHint'), 'aria-label': t('cut'),
+        onClick: onCut,
+      }, '⚔ ' + t('cut')),
       h('div', { className: 'cv-meta' },
         h(Badge, { book: card.b }),
         h('span', { className: 'cv-chip cv-chip--rev' }, isNew ? t('newWord') : t('review')),
+        maintenance && h('span', { className: 'cv-chip cv-chip--maint', title: t('maintHint') }, '🔁 ' + t('maint')),
       ),
       h('div', { className: 'cv-word' }, card.w),
       h('div', { className: 'cv-phon' },
@@ -1870,17 +1999,20 @@ function CardView({ card, isNew, showing, onReveal, onGrade }) {
         ? h('div', { className: 'cv-meaning' }, card.t || '—')
         : h('button', { className: 'cv-reveal', onClick: onReveal }, t('reveal')),
     ),
-    showing
-      ? h('div', { className: 'cv-grades' },
-          h('button', { className: 'cv-grade cv-grade--know', onClick: () => onGrade(GRADE_KNOW) }, t('known')),
-          h('button', { className: 'cv-grade cv-grade--fuzzy', onClick: () => onGrade(GRADE_FUZZY) }, t('fuzzy')),
-          h('button', { className: 'cv-grade cv-grade--miss', onClick: () => onGrade(GRADE_MISS) }, t('unknown')),
-        )
-      : h('div', { className: 'cv-hint' }, t('hintCard')),
+    holdMode
+      ? h('button', { className: 'cv-nextbtn', onClick: onHoldNext }, t('cutHoldNext') + '  →')
+      : showing
+        ? h('div', { className: 'cv-grades cv-grades--four' },
+            h('button', { className: 'cv-grade cv-grade--know', onClick: () => onGrade(GRADE_KNOW) }, t('known')),
+            h('button', { className: 'cv-grade cv-grade--fuzzy', onClick: () => onGrade(GRADE_FUZZY) }, t('fuzzy')),
+            h('button', { className: 'cv-grade cv-grade--miss', onClick: () => onGrade(GRADE_MISS) }, t('unknown')),
+            h('button', { className: 'cv-grade cv-grade--cut', title: t('cutHint'), onClick: onCut }, '⚔ ' + t('cut')),
+          )
+        : h('div', { className: 'cv-hint' }, t('hintCardCut')),
   )
 }
 
-function QuizView({ card, isNew, state, onGrade }) {
+function QuizView({ card, isNew, state, onGrade, onCut, maintenance }) {
   const entry = BOOK_INDEX.entry(card.w)
   const [picked, setPicked] = React.useState(null)
   const [nonce, setNonce] = React.useState(0)
@@ -1976,9 +2108,14 @@ function QuizView({ card, isNew, state, onGrade }) {
 
   return h('div', null,
     h('div', { className: 'cv-card' },
+      h('button', {
+        className: 'cv-cut-chip', title: t('cutHint'), 'aria-label': t('cut'),
+        onClick: onCut,
+      }, '⚔ ' + t('cut')),
       h('div', { className: 'cv-meta' },
         h(Badge, { book: card.b }),
         h('span', { className: 'cv-chip cv-chip--rev' }, isNew ? t('newWord') : t('review')),
+        maintenance && h('span', { className: 'cv-chip cv-chip--maint', title: t('maintHint') }, '🔁 ' + t('maint')),
       ),
       h('div', { className: 'cv-word' }, card.w),
       h('div', { className: 'cv-phon' },
@@ -1997,14 +2134,13 @@ function QuizView({ card, isNew, state, onGrade }) {
         return h('button', {
           key: o.w + ':' + i, className: cls,
           onClick: () => { if (!answered) setPicked(i) },
-        }, (i + 1) + '. ' + o.t)
+        }, (i + 1) + '. ' + o.t + (answered ? '  — ' + o.w : ''))
       }),
     ),
     answered && h('div', {
       ref: fbRef,
       className: 'cv-feedback ' + (wasRight ? 'cv-feedback--ok' : 'cv-feedback--no'),
-    }, (wasRight ? '✓ ' + t('quizCorrect') : '✗ ' + t('quizWrong')) +
-      ' · ' + card.w + ' ' + (entry ? entry.t : '')),
+    }, (wasRight ? '✓ ' + t('quizCorrect') : '✗ ' + t('quizWrong'))),
     answered && h('button', { className: 'cv-nextbtn', onClick: advance },
       t('quizNext') + '  →'),
     answered && !wasRight && h('div', { className: 'cv-hint' }, t('quizStay')),
@@ -2038,6 +2174,7 @@ function DoneView({ q, state }) {
 
 function LearnView({ state }) {
   const [revealed, setRevealed] = React.useState('')
+  const [cutHold, setCutHold] = React.useState(null)
   const [tick, setTick] = React.useState(0)
   // re-derive the queue every ~30s so "due now" moves forward while idling
   React.useEffect(() => {
@@ -2053,8 +2190,12 @@ function LearnView({ state }) {
 
   // Same selection the Alt+S shortcut uses (pickCard), so the spoken word is
   // always the word on the card.
-  const { card, isNew } = pickCard(state, now, q)
-  const showing = card ? revealed === card.w : false
+  const { card: queueCard, isNew, maintenance } = pickCard(state, now, q)
+  // 斩词后先驻留展示被斩词的释义，用户点「继续」再走队列里已算好的下一词。
+  const cutHoldEntry = cutHold ? BOOK_INDEX.entry(cutHold) : null
+  const card = cutHoldEntry || queueCard
+  const showing = card ? (cutHold ? true : revealed === card.w) : false
+  const holdMode = !!cutHold
 
   // Shortcut feedback line (e.g. Alt+R with nothing due yet).
   const flashN = useFlash()
@@ -2073,9 +2214,19 @@ function LearnView({ state }) {
   }
   function gradeCard(g) {
     if (!card) return
+    if (holdMode) { setCutHold(null); return }
     if (practice) { store.answer(card.w, g, false); store.practiceNext() }
     else store.answer(card.w, g)
   }
+  function cutCard() {
+    if (!card || holdMode) return
+    setRevealed(card.w)
+    setCutHold(card.w)
+    store.cutWord(card.w)
+    try { flash('cutFlash') } catch (e) {}
+    if (practice) store.practiceNext()
+  }
+  function endCutHold() { setCutHold(null) }
 
   React.useEffect(() => {
     const onKey = (ev) => {
@@ -2086,6 +2237,10 @@ function LearnView({ state }) {
       else if (showing && (ev.key === '1' || ev.key === '2' || ev.key === '3')) {
         ev.preventDefault()
         gradeCard(ev.key === '1' ? GRADE_KNOW : ev.key === '2' ? GRADE_FUZZY : GRADE_MISS)
+      }
+      else if (showing && (ev.key === '4' || ev.key === '0')) {
+        ev.preventDefault()
+        cutCard()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -2104,23 +2259,26 @@ function LearnView({ state }) {
     practice ? h(PracticeBar, { practice }) : h(ModeRow, { mode }),
     !practice && h(TodayBar, { state }),
     mode === 'card'
-      ? h(CardView, { card, isNew, showing, onReveal: doReveal, onGrade: gradeCard })
-      : h(QuizView, { card, isNew, state, onGrade: gradeCard }),
+      ? h(CardView, { card, isNew, showing, maintenance, holdMode, onHoldNext: endCutHold, onReveal: doReveal, onGrade: gradeCard, onCut: cutCard })
+      : h(QuizView, { card, isNew, state, maintenance, onGrade: gradeCard, onCut: cutCard }),
     flashMsg && h('div', { className: 'cv-flash' }, t(flashMsg)),
   )
 }
 
 function StatsView({ state }) {
   const s = bookStats(state)
+  const [showCut, setShowCut] = React.useState(false)
+  const cutList = React.useMemo(() => cutWords(state), [state])
   const rows = [
     { key: 'seen', label: t('learnedCard'), num: s.seen },
     { key: 'learning', label: t('learning'), num: s.learning },
     { key: 'graduated', label: t('mastered'), num: s.graduated },
+    { key: 'cut', label: t('cutCount'), num: s.cut },
     { key: 'streak', label: t('streak'), num: state.streak || 0 },
   ]
   const pct = s.total > 0 ? Math.round((s.graduated / s.total) * 100) : 0
   return h('div', null,
-    h('div', { className: 'cv-tiles' },
+    h('div', { className: 'cv-tiles cv-tiles--five' },
       rows.map((r) => h('div', { className: 'cv-tile', key: r.key },
         h('div', { className: 'cv-tile-num' }, String(r.num)),
         h('div', { className: 'cv-tile-label' }, r.label),
@@ -2139,6 +2297,22 @@ function StatsView({ state }) {
           h('i', { style: { width: (s.seen > 0 ? Math.round((s.boxes[b] / Math.max(1, s.seen)) * 100) : 0) + '%' } })),
         h('span', { className: 'cv-boxrow-num' }, String(s.boxes[b])),
       )),
+    ),
+    s.cut > 0 && h('div', { className: 'cv-cut-panel' },
+      h('button', { className: 'cv-cut-toggle', onClick: () => setShowCut((x) => !x) },
+        '⚔ ' + t('cutList') + ' (' + s.cut + ')  ' + (showCut ? '▴' : '▾')),
+      showCut && h('div', { className: 'cv-cut-list' },
+        h('div', { className: 'cv-cut-hint' }, t('cutListHint')),
+        cutList.slice(0, 100).map((e) => h('div', { className: 'cv-cut-row', key: e.w },
+          h('span', { className: 'cv-cut-word' }, e.w),
+          h('span', { className: 'cv-cut-meaning' }, String(e.t || '').split('\n')[0].slice(0, 28)),
+          h('button', {
+            className: 'cv-cut-recall', title: t('cutRecall'),
+            onClick: () => store.uncutWord(e.w),
+          }, t('cutRecall')),
+        )),
+        cutList.length > 100 && h('div', { className: 'cv-cut-hint' }, '… ' + (cutList.length - 100)),
+      ),
     ),
     h('div', { className: 'cv-foot' },
       t('bookTotal') + ': ' + (state.settings.book === 'cet4' ? t('cet4') : state.settings.book === 'cet6' ? t('cet6') : t('all')) +
@@ -2250,8 +2424,16 @@ function SettingsView({ state }) {
           { v: 'd3', label: t('readRangeD3') },
           { v: 'd7', label: t('readRangeD7') },
           { v: 'all', label: t('readRangeAll') },
+          { v: 'cut', label: t('readRangeCut') },
         ].map((o) => h('option', { key: o.v, value: o.v }, o.label))),
     ),
+    h('div', { className: 'cv-set-row' },
+      h('span', { className: 'cv-set-label' }, t('cutDaysLabel')),
+      seg(state.settings.cutDays || 'd30', [
+        { v: 'd15', label: '15' }, { v: 'd30', label: '30' }, { v: 'd60', label: '60' },
+      ], (v) => store.setSettings({ cutDays: v })),
+    ),
+    h('div', { className: 'cv-hint cv-cut-days-hint' }, t('cutDaysHint')),
     h('div', { className: 'cv-set-row' },
       h('span', { className: 'cv-set-label' }, t('settingsReadExample')),
       h('button', {
@@ -2598,6 +2780,13 @@ exports.apply = function apply(ctx) {
           if (picked.card) {
             ev.preventDefault()
             speak(picked.card.w)
+          }
+        } else if (k === 'z') {
+          const picked = pickCard(s, Date.now())
+          if (picked.card) {
+            ev.preventDefault()
+            store.cutWord(picked.card.w)
+            flash('cutFlash')
           }
         }
       }

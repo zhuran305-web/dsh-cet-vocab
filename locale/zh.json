@@ -104,5 +104,20 @@
   "readerOff": "循环朗读单词",
   "readEmpty": "还没有已学的词，先学几个再听",
   "settingsReadExample": "朗读例句",
-  "readExampleHint": "部分单词暂无例句，将自动跳过"
+  "readExampleHint": "部分单词暂无例句，将自动跳过",
+  "cut": "斩",
+  "cutHint": "确定会了：转入低频维护池，30 天后抽查",
+  "cutFlash": "⚔ 已斩，转入低频维护（答错会自动打回重学）",
+  "cutCount": "已斩",
+  "cutList": "已斩单词",
+  "cutListHint": "这些词已退出日常队列，按维护间隔抽查；答错会自动打回重学，也可以随时召回。",
+  "cutRecall": "召回",
+  "cutDaysLabel": "斩词抽查(天)",
+  "cutDaysHint": "斩掉的词每隔这些天抽查一次；抽查答错自动回到阶段 1 重学。",
+  "readRangeCut": "只读已斩词",
+  "scCut": "斩掉当前单词",
+  "hintCardCut": "Space 显示释义 · 1/2/3 评分 · 4 斩",
+  "maint": "维护抽查",
+  "maintHint": "已斩的词到期回来抽查一次；答错会自动打回阶段 1 重学",
+  "cutHoldNext": "已斩，继续"
 }

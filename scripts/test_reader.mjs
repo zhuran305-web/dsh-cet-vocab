@@ -30,7 +30,12 @@ check('源码含 audioWait / readerSpeakEng / readerLoop',
 check('store.answer 记录 last/first（范围过滤 + 新学按天可分）',
   src.includes('e.last = now') && src.includes('e.first = now'))
 check('CSS 含 .cv-reader 开关样式', /\.cv-reader \{/.test(src))
-check('CSS 含开启态与脉冲动画', src.includes('.cv-reader--on') && src.includes('@keyframes cv-pulse'))
+check('CSS 含开启态与静态状态环（无常驻动画）',
+  src.includes('.cv-reader--on') && src.includes('.cv-reader--on::after') &&
+  !src.includes('@keyframes cv-pulse') && src.includes('prefers-reduced-motion'))
+check('设计令牌与统一圆角/字号/过渡', src.includes('--cv-r-sm: 8px') &&
+  src.includes('--cv-t-sm: 12.5px') && src.includes('--cv-ease'))
+check('无限动画已清零', !/animation:[^;]*infinite/.test(src))
 check('收起时开关在 pill 左侧同一簇，展开/关闭时独立浮动',
   src.includes("h(ReaderToggle, { inCluster: true })") &&
   /const floatToggle = collapsed \? null : h\(ReaderToggle, null\)/.test(src) &&
