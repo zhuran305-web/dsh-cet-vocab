@@ -30,7 +30,7 @@ const check = (name, ok, detail) => {
 
 function load(store) {
   const factory = new Function('clamp', 'store', 'window', chunk +
-    '\nreturn { clampScale, winScale, beginResize, WIN_W, SCALE_MIN, SCALE_MAX }')
+    '\nreturn { clampScale, winScale, beginResize, windowLeftFor, pillLabelRoom, WIN_W, SCALE_MIN, SCALE_MAX }')
   return factory(clamp, store, { innerWidth: 1400, innerHeight: 900 })
 }
 
@@ -86,6 +86,32 @@ function drag(api, store, { startX = 100, dx, startScale = 1 } = {}) {
   check('clampScale 处理脏值', api.clampScale(undefined) === 1 && api.clampScale('x') === 1)
   check('winScale 缺省为 1', api.winScale({}) === 1 && api.winScale(null) === 1)
   check('winScale 读回已存值', api.winScale({ scale: 1.35 }) === 1.35)
+}
+
+// ---- horizontal fit (right border never leaves the viewport) --------------
+{
+  const api = load({ setScale() {} })
+  const W = 1400, EDGE = 12
+  // z=1: 384-wide window; z=2: 768-wide window
+  for (const z of [0.7, 1, 1.5, 2]) {
+    const rightMost = W - 90 // the old drag clamp's upper bound (pill near edge)
+    const left = api.windowLeftFor(rightMost, z, W)
+    check('z=' + z + '：贴右 pill 展开后右边框不越界',
+      left + 384 * z <= W - EDGE && left >= 8,
+      'left=' + left + ' right=' + (left + 384 * z))
+  }
+  check('左侧存档位置不被误推', api.windowLeftFor(100, 1, W) === 100, String(api.windowLeftFor(100, 1, W)))
+  check('无存档返回 null（用 CSS 默认位）', api.windowLeftFor(null, 1, W) === null)
+  check('超窄视口仍保留 8px 最小左距（不产生负值）',
+    api.windowLeftFor(100, 2, 320) >= 8, String(api.windowLeftFor(100, 2, 320)))
+  // 标签可用宽度 = 视口 - 容器 x - 朗读开关槽位 - 边距；不把开关那 42px 算进去
+  // 就会「离右边界还有距离就先折行」（上一版的实际症状）。
+  check('pill 标签可用宽度扣除朗读开关槽位',
+    api.pillLabelRoom(1000, 1400) === 1400 - 1000 - 42 - 16,
+    String(api.pillLabelRoom(1000, 1400)))
+  check('贴右时可用宽度趋近 0（此时才真正折成一列）',
+    api.pillLabelRoom(1400 - 42 - 16, 1400) === 0, String(api.pillLabelRoom(1358, 1400)))
+  check('可用宽度永不为负', api.pillLabelRoom(9999, 1400) === 0)
 }
 
 // ---- dragging maps pixels to zoom ---------------------------------------
@@ -153,6 +179,27 @@ function drag(api, store, { startX = 100, dx, startScale = 1 } = {}) {
   check('默认状态存 scale', /win:\s*\{ x: null, y: null, min: false, scale: 1 \}/.test(src))
   check('持久化走 store.setScale', /setScale\(scale\) \{/.test(src))
   check('手柄有提示文案', /title: t\('resizeHint'\)/.test(src))
+  check('展开窗口统一走 windowLeftFor 水平适应（覆盖 pill/alt+Q/自动弹出）',
+    /const left = geom\.x != null \? windowLeftFor\(geom\.x, z, vw\) : null/.test(src) &&
+    /\{\s*left: left \+ 'px', top: geom\.y \+ 'px' \}/.test(src))
+  check('pill 自由拖动不被窗口宽度钳制（拖到右边界由展开时适应）',
+    /const isPill = el\.classList\.contains\('cv-cluster'\)/.test(src) &&
+    /if \(isPill\)[\s\S]{0,160}window\.innerWidth - 90/.test(src) &&
+    /else \{[\s\S]{0,200}WIN_W \* z - WIN_EDGE/.test(src))
+  check('贴右时 pill 被真实挤压成一列（无阈值、无淡入淡出）',
+    src.includes('PILL_EDGE_PAD') && !src.includes('PILL_SQUEEZE_PX') &&
+    src.includes('cv-pill-label') && src.includes('cv-pill-ch') &&
+    /flex-wrap: wrap/.test(src) && !/\.cv-pill-h, \.cv-pill-v/.test(src) &&
+    !/data-narrow="1"/.test(src))
+  check('拖动中实时把真实剩余宽度写入 maxWidth（布局自然回流，不靠 store）',
+    src.includes('pillLabelRoom') && src.includes('READER_SLOT') &&
+    /const room = pillLabelRoom\(x, window\.innerWidth\)/.test(src) &&
+    /label\.style\.maxWidth = room \+ 'px'/.test(src) &&
+    /const room = geom\.x != null \? pillLabelRoom\(geom\.x, vw\) : null/.test(src))
+  check('视口宽度变化有 resize 监听且会重算', /function useViewportWidth\(\)/.test(src) &&
+    src.includes("window.addEventListener('resize', onResize, { passive: true })"))
+  check('拖动钳制按展开态视觉宽度算（不写入会越界的 x）',
+    /window\.innerWidth - WIN_W \* z - WIN_EDGE/.test(src))
 }
 
 const failed = results.filter((r) => !r.ok)

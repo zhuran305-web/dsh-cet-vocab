@@ -41,7 +41,7 @@
   "voiceSysOk": "{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.",
   "voiceRetry": "Retry",
   "settingsReset": "Reset all progress",
-  "resetConfirm": "Click again to confirm",
+  "resetConfirm": "Click again to erase progress for {n} words (valid 3.5s)",
   "dataSource": "Word data: ECDICT (MIT license)",
   "bookBadge4": "CET-4",
   "bookBadge6": "CET-6",
@@ -119,5 +119,10 @@
   "hintCardCut": "Space reveal · 1/2/3 grade · 4 cut",
   "maint": "Maintenance check",
   "maintHint": "A cut word returns for one long-interval check; a miss sends it back to stage 1",
-  "cutHoldNext": "Cut — continue"
+  "cutHoldNext": "Cut — continue",
+  "starCta": "Star the repo",
+  "starHint": "Opens the project page — click Star there (a browser plugin cannot authorise on your behalf)",
+  "settingsData": "Data & reset",
+  "resetHint": "Resetting erases all learning progress (memory stages, review schedule, cut list) and cannot be undone. The word book and settings stay.",
+  "learnedCount": "{n} learned"
 }

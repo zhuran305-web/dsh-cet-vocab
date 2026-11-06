@@ -59,6 +59,13 @@ Requirements: an authenticated `gh`, and an npm **granular access token with “
 
 ## Changelog / 更新记录
 
+### 0.2.5
+
+- **边界适应 / Edge-aware window** — 悬浮按钮拖到屏幕右侧后点开，卡片按 `384 × 缩放` 的真实视觉宽度自动内收，不再溢出右边界；不改动已保存的位置，收起后仍在原处；DSH 侧栏或窗口尺寸变化时实时重算。The expanded card now fits itself inside the viewport by its real scaled width, without moving the saved pill position, and re-fits on viewport resize.
+- **真实挤压 / Squeeze, don't swap** — 贴边时按钮文字被空间逐字压成一列（📖 / 背 / 单 / 词），由布局压力驱动，不是阈值切换或淡入淡出。Near the edge the pill label genuinely reflows into a column under layout pressure — no breakpoint switch, no cross-fade.
+- **防误触 / Safer reset** — 「重置全部进度」移入二级页「数据与重置」，首页改为低权重入口（显示已学词数）；二次确认 3.5 秒自动失效、危险态实心红、明确显示将清空多少词。Reset moved into a "Data & reset" sub-page; the confirmation now expires after 3.5s, turns solid red, and names how many words will be erased.
+- **Star 鼓励 / Star the repo** — 设置页新增 Star 按钮，打开项目主页（浏览器插件无法代替用户授权）。A "Star the repo" button opens the project page, since a client plugin cannot authorise on the user's behalf.
+
 ### 0.2.4
 
 - **斩单词 / Cut** — 「⚔ 斩」不删除、不毕业：词转入记忆阶段 6 的低频维护池，按可配间隔（15/30/60 天）抽查，抽查答错自动打回阶段 1。统计页可查看「已斩」列表并随时召回，抽查词带「维护抽查」角标；循环朗读默认排除已斩词。Cut words move to a low-frequency maintenance pool (memory stage 6) with configurable 15/30/60-day checks instead of being deleted; a failed check returns the word to stage 1. A cut list with recall, a maintenance-check badge, and reader filtering are included.

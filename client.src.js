@@ -24,6 +24,10 @@ const h = React.createElement
 
 const PLUGIN_ID = 'dsh-cet-vocab'
 const LS_KEY = 'dsh-cet-vocab:v1'
+// The "star the repo" link: this is a browser-side plugin, so the strongest
+// honest gesture is opening the repo where GitHub's own Star button lives —
+// a PAT must never be embedded in client code to star on the user's behalf.
+const REPO_URL = 'https://github.com/zhuran305-web/dsh-cet-vocab'
 
 /** Minutes per memory box 0..5; answering "know" at box 5 graduates (box 6). */
 const INTERVALS_MIN = [10, 1440, 2880, 5760, 11520, 23040]
@@ -1127,7 +1131,7 @@ const store = {
       const next = { ...s.win, scale: z }
       // Same rules beginDrag() uses, against the *visual* box.
       if (next.x != null && typeof window !== 'undefined') {
-        next.x = Math.round(clamp(next.x, 8 - WIN_W * z + 90, window.innerWidth - 90))
+        next.x = windowLeftFor(next.x, z, window.innerWidth)
         next.y = Math.round(clamp(next.y, 6, window.innerHeight - 42))
       }
       s.win = next
@@ -1337,8 +1341,8 @@ function cutWords(state) {
 
 // ------------------------------------------------------------------- locale
 
-const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","settingsLearn":"学习","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","dailyPerDay":"{n} 词/天","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次确认重置","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","resizeHint":"拖动改变大小 · 双击复位","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","quizNext":"下一个","quizStay":"答错会停在这里，按 → 或点「下一个」继续","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色","hintCard":"Space 显示释义 · 1/2/3 评分","scTitle":"快捷键","scToggle":"展开 / 收起悬浮窗","scModeCard":"切换到卡片模式","scModeQuiz":"切换到选择题模式","scSpeak":"朗读当前单词","scReveal":"显示释义","scGrade":"认识 / 模糊 / 不认识","scPick":"选择答案 1-4","scNext":"下一个词（答完题后）","scNote":"单键（Space、数字）只在窗口展开且光标不在输入框时生效；Alt 组合键在页面任何位置都能用。","scReview":"复习稍后到期的词（最多 20 个）","scExtra":"加练 10 个生词","scExit":"退出加练（加练中）","practiceNoReview":"暂时没有待复习的词","practiceNoExtra":"没有更多生词可以加练","readModeLabel":"朗读内容","readModeW":"只读单词","readModeWT":"词 + 翻译","readModeWTW":"词→译→词","readRangeLabel":"朗读范围","readRangeToday":"今天","readRangeYd":"今天和昨天","readRangeNew":"新学词（昨天起）","readRangeD3":"最近 3 天","readRangeD7":"最近 7 天","readRangeAll":"全部已学","readerOn":"停止循环朗读","readerOff":"循环朗读单词","readEmpty":"还没有已学的词，先学几个再听","settingsReadExample":"朗读例句","readExampleHint":"部分单词暂无例句，将自动跳过","cut":"斩","cutHint":"确定会了：转入低频维护池，30 天后抽查","cutFlash":"⚔ 已斩，转入低频维护（答错会自动打回重学）","cutCount":"已斩","cutList":"已斩单词","cutListHint":"这些词已退出日常队列，按维护间隔抽查；答错会自动打回重学，也可以随时召回。","cutRecall":"召回","cutDaysLabel":"斩词抽查(天)","cutDaysHint":"斩掉的词每隔这些天抽查一次；抽查答错自动回到阶段 1 重学。","readRangeCut":"只读已斩词","scCut":"斩掉当前单词","hintCardCut":"Space 显示释义 · 1/2/3 评分 · 4 斩","maint":"维护抽查","maintHint":"已斩的词到期回来抽查一次；答错会自动打回阶段 1 重学","cutHoldNext":"已斩，继续"}
-const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","settingsLearn":"Learning","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","dailyPerDay":"{n} / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to confirm","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","resizeHint":"Drag to resize · double-click to reset","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","quizNext":"Next","quizStay":"Wrong answers stay put — press → to continue","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark","hintCard":"Space reveal · 1/2/3 grade","scTitle":"Keyboard shortcuts","scToggle":"Expand / collapse the window","scModeCard":"Switch to card mode","scModeQuiz":"Switch to quiz mode","scSpeak":"Speak the current word","scReveal":"Reveal the meaning","scGrade":"Known / Fuzzy / Miss","scPick":"Pick an answer (1-4)","scNext":"Next word (after answering)","scNote":"Single keys (Space, digits) work only while the window is expanded and the caret is not in a text field; Alt combos work anywhere on the page.","scReview":"Review words due later (up to 20)","scExtra":"Practise 10 new words","scExit":"Exit practice (while practising)","practiceNoReview":"Nothing due for review yet","practiceNoExtra":"No more new words to practise","readModeLabel":"Read aloud","readModeW":"Word only","readModeWT":"Word + meaning","readModeWTW":"Word → meaning → word","readRangeLabel":"Range","readRangeToday":"Today","readRangeYd":"Today & yesterday","readRangeNew":"Newly learned","readRangeD3":"Last 3 days","readRangeD7":"Last 7 days","readRangeAll":"All learned","readerOn":"Stop loop reading","readerOff":"Loop-read words","readEmpty":"No learned words yet — learn a few first","settingsReadExample":"Read example sentences","readExampleHint":"Some words have no examples yet — skipped automatically","cut":"Cut","cutHint":"I know this: move to low-frequency maintenance, checked later","cutFlash":"⚔ Cut — moved to low-frequency maintenance (a miss sends it back)","cutCount":"Cut","cutList":"Cut words","cutListHint":"These are out of the daily queue and return for a long-interval check; a miss sends one back to stage 1, or recall it any time.","cutRecall":"Recall","cutDaysLabel":"Check gap (days)","cutDaysHint":"Cut words are checked every N days; a failed check sends the word back to stage 1.","readRangeCut":"Cut words only","scCut":"Cut the current word","hintCardCut":"Space reveal · 1/2/3 grade · 4 cut","maint":"Maintenance check","maintHint":"A cut word returns for one long-interval check; a miss sends it back to stage 1","cutHoldNext":"Cut — continue"}
+const ZH = {"title":"背单词","tabLearn":"学习","tabStats":"统计","tabSettings":"设置","reveal":"显示释义","known":"认识","fuzzy":"模糊","unknown":"不认识","newToday":"今日新学","reviewDone":"今日复习","streak":"连续","streakUnit":"天","dueNow":"待复习","newLeft":"待新学","allDone":"今日计划完成","dueLater":"{n} 个词稍后到期","seeYou":"明天见 👋","mastered":"已掌握","learning":"学习中","bookTotal":"词库","overallProgress":"总进度","settingsBook":"词库","settingsLearn":"学习","cet4":"四级","cet6":"六级","all":"全部","settingsDaily":"每日新词","dailyPerDay":"{n} 词/天","settingsSpeak":"显示释义时自动发音","settingsVoice":"发音口音","accentAuto":"自动","accentUS":"美式","accentUK":"英式","voiceTest":"试听","voiceSysNone":"未检测到系统英语语音包——已自动改用在线真人发音（美式/英式，需联网）；如需离线发音，可让管理员在 Windows 设置 → 时间和语言 → 语音 中添加英语语音包。","voiceSysOk":"系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。","voiceRetry":"重新检测","settingsReset":"重置全部进度","resetConfirm":"再点一次清空 {n} 个词的学习进度（3.5 秒内有效）","dataSource":"词库数据：ECDICT（MIT 许可）","bookBadge4":"四级","bookBadge6":"六级","bookBadgeBoth":"四六级","minimize":"收起","resizeHint":"拖动改变大小 · 双击复位","review":"复习","newWord":"新词","noPhonetic":"—","todayCard":"今日","learnedCard":"已学","boxCard":"记忆阶段","emptyQueueHint":"复习和新词都已完成，可以收起来啦","changeBookHint":"可在「设置」里切换四六级词库","graduated":"已毕业","modeCard":"卡片","modeQuiz":"选择","practiceTag":"加练","practiceReview":"复习到期词","practiceExtra":"加练 10 词","practiceExit":"退出加练","quizCorrect":"答对了","quizWrong":"答错了","optHint":"按 1-4 选择答案","quizNext":"下一个","quizStay":"答错会停在这里，按 → 或点「下一个」继续","settingsAutoOpen":"模型思考时自动弹出","autoOpenToast":"模型思考中，来背两个单词吧 📖","settingsAppearance":"外观","appearanceAuto":"跟随主题","appearanceDark":"深色","hintCard":"Space 显示释义 · 1/2/3 评分","scTitle":"快捷键","scToggle":"展开 / 收起悬浮窗","scModeCard":"切换到卡片模式","scModeQuiz":"切换到选择题模式","scSpeak":"朗读当前单词","scReveal":"显示释义","scGrade":"认识 / 模糊 / 不认识","scPick":"选择答案 1-4","scNext":"下一个词（答完题后）","scNote":"单键（Space、数字）只在窗口展开且光标不在输入框时生效；Alt 组合键在页面任何位置都能用。","scReview":"复习稍后到期的词（最多 20 个）","scExtra":"加练 10 个生词","scExit":"退出加练（加练中）","practiceNoReview":"暂时没有待复习的词","practiceNoExtra":"没有更多生词可以加练","readModeLabel":"朗读内容","readModeW":"只读单词","readModeWT":"词 + 翻译","readModeWTW":"词→译→词","readRangeLabel":"朗读范围","readRangeToday":"今天","readRangeYd":"今天和昨天","readRangeNew":"新学词（昨天起）","readRangeD3":"最近 3 天","readRangeD7":"最近 7 天","readRangeAll":"全部已学","readerOn":"停止循环朗读","readerOff":"循环朗读单词","readEmpty":"还没有已学的词，先学几个再听","settingsReadExample":"朗读例句","readExampleHint":"部分单词暂无例句，将自动跳过","cut":"斩","cutHint":"确定会了：转入低频维护池，30 天后抽查","cutFlash":"⚔ 已斩，转入低频维护（答错会自动打回重学）","cutCount":"已斩","cutList":"已斩单词","cutListHint":"这些词已退出日常队列，按维护间隔抽查；答错会自动打回重学，也可以随时召回。","cutRecall":"召回","cutDaysLabel":"斩词抽查(天)","cutDaysHint":"斩掉的词每隔这些天抽查一次；抽查答错自动回到阶段 1 重学。","readRangeCut":"只读已斩词","scCut":"斩掉当前单词","hintCardCut":"Space 显示释义 · 1/2/3 评分 · 4 斩","maint":"维护抽查","maintHint":"已斩的词到期回来抽查一次；答错会自动打回阶段 1 重学","cutHoldNext":"已斩，继续","starCta":"给个 Star 鼓励一下","starHint":"打开项目主页，点右上角 Star 即可（浏览器插件无法代替你授权）","settingsData":"数据与重置","resetHint":"重置会清空全部学习进度（记忆阶段、复习计划、已斩记录），此操作不可撤销。词库与设置项会保留。","learnedCount":"已学 {n} 词"}
+const EN = {"title":"Vocabulary","tabLearn":"Learn","tabStats":"Stats","tabSettings":"Settings","reveal":"Show meaning","known":"Know","fuzzy":"Fuzzy","unknown":"Miss","newToday":"New today","reviewDone":"Reviewed today","streak":"Streak","streakUnit":"d","dueNow":"Due","newLeft":"New left","allDone":"Daily plan complete","dueLater":"{n} words due later","seeYou":"See you tomorrow 👋","mastered":"Mastered","learning":"Learning","bookTotal":"Book","overallProgress":"Overall progress","settingsBook":"Word book","settingsLearn":"Learning","cet4":"CET-4","cet6":"CET-6","all":"All","settingsDaily":"New words / day","dailyPerDay":"{n} / day","settingsSpeak":"Speak on reveal","settingsVoice":"Accent","accentAuto":"Auto","accentUS":"US","accentUK":"UK","voiceTest":"Preview","voiceSysNone":"No English voice pack detected — pronunciation now uses online human recordings (US/UK, needs network). For offline use, an administrator can add English voices in Windows Settings → Time & language → Speech.","voiceSysOk":"{n} system English voice(s) found; online recordings are preferred and system voices serve as the offline fallback.","voiceRetry":"Retry","settingsReset":"Reset all progress","resetConfirm":"Click again to erase progress for {n} words (valid 3.5s)","dataSource":"Word data: ECDICT (MIT license)","bookBadge4":"CET-4","bookBadge6":"CET-6","bookBadgeBoth":"CET-4/6","minimize":"Collapse","resizeHint":"Drag to resize · double-click to reset","review":"Review","newWord":"New","noPhonetic":"—","todayCard":"Today","learnedCard":"Learned","boxCard":"Memory stage","emptyQueueHint":"Reviews and new words are done for today","changeBookHint":"Switch word book in Settings","graduated":"Graduated","modeCard":"Cards","modeQuiz":"Quiz","practiceTag":"Practice","practiceReview":"Review due words","practiceExtra":"Practice +10","practiceExit":"Exit practice","quizCorrect":"Correct","quizWrong":"Wrong","optHint":"Press 1-4 to answer","quizNext":"Next","quizStay":"Wrong answers stay put — press → to continue","settingsAutoOpen":"Pop up while the model thinks","autoOpenToast":"Model is thinking — quick vocab break 📖","settingsAppearance":"Appearance","appearanceAuto":"Follow theme","appearanceDark":"Dark","hintCard":"Space reveal · 1/2/3 grade","scTitle":"Keyboard shortcuts","scToggle":"Expand / collapse the window","scModeCard":"Switch to card mode","scModeQuiz":"Switch to quiz mode","scSpeak":"Speak the current word","scReveal":"Reveal the meaning","scGrade":"Known / Fuzzy / Miss","scPick":"Pick an answer (1-4)","scNext":"Next word (after answering)","scNote":"Single keys (Space, digits) work only while the window is expanded and the caret is not in a text field; Alt combos work anywhere on the page.","scReview":"Review words due later (up to 20)","scExtra":"Practise 10 new words","scExit":"Exit practice (while practising)","practiceNoReview":"Nothing due for review yet","practiceNoExtra":"No more new words to practise","readModeLabel":"Read aloud","readModeW":"Word only","readModeWT":"Word + meaning","readModeWTW":"Word → meaning → word","readRangeLabel":"Range","readRangeToday":"Today","readRangeYd":"Today & yesterday","readRangeNew":"Newly learned","readRangeD3":"Last 3 days","readRangeD7":"Last 7 days","readRangeAll":"All learned","readerOn":"Stop loop reading","readerOff":"Loop-read words","readEmpty":"No learned words yet — learn a few first","settingsReadExample":"Read example sentences","readExampleHint":"Some words have no examples yet — skipped automatically","cut":"Cut","cutHint":"I know this: move to low-frequency maintenance, checked later","cutFlash":"⚔ Cut — moved to low-frequency maintenance (a miss sends it back)","cutCount":"Cut","cutList":"Cut words","cutListHint":"These are out of the daily queue and return for a long-interval check; a miss sends one back to stage 1, or recall it any time.","cutRecall":"Recall","cutDaysLabel":"Check gap (days)","cutDaysHint":"Cut words are checked every N days; a failed check sends the word back to stage 1.","readRangeCut":"Cut words only","scCut":"Cut the current word","hintCardCut":"Space reveal · 1/2/3 grade · 4 cut","maint":"Maintenance check","maintHint":"A cut word returns for one long-interval check; a miss sends it back to stage 1","cutHoldNext":"Cut — continue","starCta":"Star the repo","starHint":"Opens the project page — click Star there (a browser plugin cannot authorise on your behalf)","settingsData":"Data & reset","resetHint":"Resetting erases all learning progress (memory stages, review schedule, cut list) and cannot be undone. The word book and settings stay.","learnedCount":"{n} learned"}
 
 let localeBinder = null
 const t = (key) => {
@@ -1605,6 +1609,25 @@ const CSS = `
   transition: background var(--cv-ease);
 }
 .cv-resetbtn:hover { background: color-mix(in srgb, var(--cv-err, var(--dsw-alias-state-error-primary)) 10%, transparent); }
+/* Armed (second click will wipe everything): solid red, unmistakable. */
+.cv-resetbtn--armed {
+  background: var(--cv-err, var(--dsw-alias-state-error-primary));
+  color: var(--cv-accent-fg, #fff); font-weight: 700;
+  border-color: transparent;
+}
+.cv-resetbtn--armed:hover { filter: brightness(1.06); background: var(--cv-err, var(--dsw-alias-state-error-primary)); }
+/* Gentle nudge, not a nag: sits above the destructive reset, accent-tinted. */
+.cv-starbtn {
+  width: 100%; margin-top: var(--cv-sp-3); padding: 9px 0; font-size: 13px; font-weight: 600;
+  cursor: pointer; border-radius: var(--cv-r-sm);
+  border: 1px solid color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 42%, transparent);
+  background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 10%, transparent);
+  color: var(--cv-accent-text, var(--dsw-alias-brand-primary));
+  transition: background var(--cv-ease), transform var(--cv-ease);
+}
+.cv-starbtn:hover { background: color-mix(in srgb, var(--cv-accent, var(--dsw-alias-brand-primary)) 18%, transparent); }
+.cv-starbtn:active { transform: scale(.985); }
+.cv-star-hint { margin-top: 6px; }
 .cv-foot { margin-top: var(--cv-sp-3); font-size: var(--cv-t-xs); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); text-align: center; }
 /* Collapsed cluster: reader toggle on the LEFT of the pill — one connected
    group that is grabbed and dragged as a whole, so the toggle follows live. */
@@ -1618,9 +1641,20 @@ const CSS = `
   padding: 9px 15px; border-radius: 999px; border: none; cursor: grab; touch-action: none;
   background: var(--cv-accent, var(--dsw-alias-brand-primary)); color: var(--cv-accent-fg, #fff); font-size: 13.5px; font-weight: 600;
   box-shadow: 0 8px 20px rgba(0,0,0,.22); user-select: none;
+  /* Squeeze, don't morph: no opacity tricks, the layout does the work. */
+  position: relative; box-sizing: border-box; max-width: 100%;
   transition: filter var(--cv-ease);
 }
 .cv-pill:active { cursor: grabbing; }
+.cv-pill-label {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 0 1px; min-width: 0; overflow: hidden;
+  line-height: 1.2;
+}
+/* One glyph per item: the wrap points are the character boundaries, so the
+   break never lands mid-word the way plain text wrapping did. */
+.cv-pill-ch { display: block; white-space: nowrap; }
+.cv-pill-icon { display: block; margin-right: 4px; }
 .cv-mode-row { display: flex; gap: 6px; margin-bottom: 10px; }
 .cv-mode-btn {
   flex: 1; padding: 6px 0; font-size: var(--cv-t-sm); cursor: pointer; border-radius: var(--cv-r-sm);
@@ -1862,6 +1896,16 @@ let dragMoved = false // true when a drag actually moved; suppresses pill click-
 const WIN_W = 384
 const SCALE_MIN = 0.7
 const SCALE_MAX = 2
+const WIN_EDGE = 12 // keep the window's right border at least this far inside the viewport
+const PILL_EDGE_PAD = 16 // breathing room kept between the pill's text and the viewport edge
+/** Space the pill's label may occupy at a given container x: the pill sits to
+ *  the right of the reader toggle inside the cluster, so subtract that too —
+ *  otherwise the text reflows while there is still visible room to its right. */
+const READER_SLOT = 42 // toggle width 34 + cluster gap 8
+function pillLabelRoom(x, vw) {
+  const width = vw || (typeof window !== 'undefined' ? window.innerWidth : 1600) || 1600
+  return Math.max(0, Math.floor(width - (Number(x) || 0) - READER_SLOT - PILL_EDGE_PAD))
+}
 function clampScale(v) {
   if (v == null || v === '') return 1 // missing in the saved geometry
   const n = Number(v)
@@ -1870,6 +1914,18 @@ function clampScale(v) {
 }
 function winScale(geom) {
   return clampScale(geom && geom.scale)
+}
+
+/** Horizontal fit: the expanded window is WIN_W * z visual px wide, anchored
+ *  at its left edge. Pull `left` back whenever that right border would leave
+ *  the viewport. Pure math — no DOM reads, no state writes, cheap on every
+ *  render. Also used by the drag clamp so stored geometry can never be a
+ *  value that overflows when the pill is opened. */
+function windowLeftFor(x, z, vw) {
+  const width = typeof window !== 'undefined' && window.innerWidth ? window.innerWidth : (vw || 1600)
+  const maxLeft = Math.max(8, width - WIN_W * z - WIN_EDGE)
+  if (x == null) return null
+  return Math.round(clamp(Number(x) || 0, 8, maxLeft))
 }
 
 function beginResize(e, geom) {
@@ -1910,6 +1966,7 @@ function beginDrag(e, geom) {
   dragMoved = false
   const el = e.currentTarget.closest('.cv-cluster') || e.currentTarget.closest('.cv-window')
   if (!el) return
+  const isPill = el.classList.contains('cv-cluster')
   const rect = el.getBoundingClientRect()
   const offX = e.clientX - rect.left
   const offY = e.clientY - rect.top
@@ -1917,12 +1974,36 @@ function beginDrag(e, geom) {
   let last = null
   const move = (ev) => {
     dragMoved = true
-    const x = clamp(ev.clientX - offX, 8 - rect.width + 90, window.innerWidth - 90)
+    // Pill: free dragging — only ~90px of it must stay visible, it may sit
+    // anywhere up to the right edge. Opening it is handled by windowLeftFor
+    // (VocabWindow), which pulls the 384*z-wide card back inside the viewport.
+    // Expanded window: clamp against its own visual width so it never leaves
+    // the screen while being dragged either.
     const y = clamp(ev.clientY - offY, 6, window.innerHeight - 42)
+    let x
+    if (isPill) {
+      x = clamp(ev.clientX - offX, 8 - rect.width + 90, window.innerWidth - 90)
+    } else {
+      const z = winScale(store.get().win || {})
+      x = clamp(ev.clientX - offX, 8, Math.max(8, window.innerWidth - WIN_W * z - WIN_EDGE))
+    }
     last = { x, y }
     el.style.left = x + 'px'
     el.style.top = y + 'px'
     el.style.right = 'auto'
+    // Give the label the space that is really left on screen: characters then
+    // reflow into a column exactly when the pill reaches the edge, driven by
+    // layout pressure rather than a hard-coded breakpoint or a cross-fade.
+    if (isPill) {
+      const label = el.querySelector('.cv-pill-label')
+      if (label) {
+        const room = pillLabelRoom(x, window.innerWidth)
+        if (label.dataset.room !== String(room)) {
+          label.dataset.room = String(room)
+          label.style.maxWidth = room + 'px'
+        }
+      }
+    }
     readerFollowDrag(x, y) // the store commits on pointer-up only; follow live
   }
   const up = () => {
@@ -1937,6 +2018,20 @@ function beginDrag(e, geom) {
   header.addEventListener('pointerup', up)
   header.addEventListener('pointercancel', up)
   e.preventDefault()
+}
+
+/** Track viewport width so side-panel toggles / browser resizes re-fit the
+ *  expanded window without a persisted geometry change. One passive listener,
+ *  removed on unmount; setState only when the value actually changes. */
+function useViewportWidth() {
+  const [vw, setVw] = React.useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1600))
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || !window.addEventListener) return undefined
+    const onResize = () => setVw((prev) => (prev === window.innerWidth ? prev : window.innerWidth))
+    window.addEventListener('resize', onResize, { passive: true })
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  return vw
 }
 
 function Badge({ book }) {
@@ -2332,6 +2427,15 @@ function SettingsView({ state }) {
   const [armed, setArmed] = React.useState(false)
   const [panel, setPanel] = React.useState('')
   const [voices, setVoices] = React.useState(() => refreshVoices().slice())
+  // A one-shot confirmation must decay: without this the button stays in
+  // "click again to confirm" forever and an unrelated later click wipes all
+  // progress. Deliberately reuses the existing `armed` state (no new useState)
+  // so the fake-React order in test_settings_render stays valid.
+  React.useEffect(() => {
+    if (!armed) return undefined
+    const id = window.setTimeout(() => setArmed(false), 3500)
+    return () => window.clearTimeout(id)
+  }, [armed])
   // Chromium populates the voice list late; re-read on the event and once after
   // mount so the picker is never permanently empty.
   React.useEffect(() => {
@@ -2471,8 +2575,22 @@ function SettingsView({ state }) {
       h('div', { className: 'cv-sc-note' }, t('scNote')),
     ),
   )
+  const dataPage = h('div', null,
+    subHead(t('settingsData')),
+    h('div', { className: 'cv-hint', style: { textAlign: 'left', marginTop: 0, marginBottom: 10, lineHeight: 1.6 } },
+      t('resetHint')),
+    h('button', {
+      className: 'cv-resetbtn' + (armed ? ' cv-resetbtn--armed' : ''),
+      onClick: () => {
+        if (!armed) { setArmed(true); return }
+        store.reset()
+        setArmed(false)
+      },
+    }, armed ? fmtT(t('resetConfirm'), { n: bookStats(state).seen }) : t('settingsReset')),
+  )
   if (panel === 'learn') return learnPage
   if (panel === 'keys') return keysPage
+  if (panel === 'data') return dataPage
   return h('div', null,
     h('button', { className: 'cv-set-entry', onClick: () => setPanel('learn') },
       h('span', { className: 'cv-set-label' }, t('settingsLearn')),
@@ -2507,14 +2625,17 @@ function SettingsView({ state }) {
       h('span', { className: 'cv-set-label' }, '⌨️ ' + t('scTitle')),
       h('span', { className: 'cv-set-chevron' }, '›'),
     ),
+    h('button', { className: 'cv-set-entry', onClick: () => setPanel('data') },
+      h('span', { className: 'cv-set-label' }, t('settingsData')),
+      h('span', { className: 'cv-set-value' }, fmtT(t('learnedCount'), { n: bookStats(state).seen })),
+      h('span', { className: 'cv-set-chevron' }, '›'),
+    ),
     h('button', {
-      className: 'cv-resetbtn',
-      onClick: () => {
-        if (!armed) { setArmed(true); return }
-        store.reset()
-        setArmed(false)
-      },
-    }, armed ? t('resetConfirm') : t('settingsReset')),
+      className: 'cv-starbtn',
+      title: t('starHint'),
+      onClick: () => { try { window.open(REPO_URL, '_blank', 'noopener') } catch (e) {} },
+    }, '⭐ ' + t('starCta')),
+    h('div', { className: 'cv-hint cv-star-hint' }, t('starHint')),
     h('div', { className: 'cv-foot' },
       t('dataSource') +
       (typeof CET_WORDS !== 'undefined' && CET_WORDS && CET_WORDS.counts
@@ -2532,8 +2653,10 @@ function VocabWindow() {
   const badge = due.reviews.length + due.fresh.length
   const geom = state.win || {}
   const z = winScale(geom)
+  const vw = useViewportWidth()
+  const left = geom.x != null ? windowLeftFor(geom.x, z, vw) : null
   const style = {
-    ...(geom.x != null && geom.y != null ? { left: geom.x + 'px', top: geom.y + 'px' } : null),
+    ...(geom.x != null && geom.y != null ? { left: left + 'px', top: geom.y + 'px' } : null),
     transform: 'scale(' + z + ')',
     transformOrigin: 'top left',
     // In layout units the card may be taller than the screen once scaled, so
@@ -2582,9 +2705,14 @@ function VocabPill() {
   const due = React.useMemo(() => buildQueue(state, now), [state]) // eslint-disable-line
   const badge = due.reviews.length + due.fresh.length
   const geom = state.win || {}
+  const vw = useViewportWidth()
   const style = geom.x != null && geom.y != null ? { left: geom.x + 'px', top: geom.y + 'px' } : null
-  // One flex cluster: reader toggle on the LEFT of the pill. Dragging moves
-  // the cluster, so the toggle follows the drag in real time for free.
+  const title = String(t('title') || '')
+  // CJK breaks per glyph; latin words stay whole (an English "Vocabulary"
+  // split into 10 rows would be nonsense) and simply shrink/wrap as a unit.
+  const isCJK = /^[\u4e00-\u9fff]+$/.test(title)
+  const parts = isCJK ? Array.from(title) : [title]
+  const room = geom.x != null ? pillLabelRoom(geom.x, vw) : null
   return h('div', { className: 'cv-root' },
     h('div', {
       className: 'cv-cluster' + (geom.x == null ? ' cv-cluster--default' : ''),
@@ -2595,9 +2723,14 @@ function VocabPill() {
         className: 'cv-pill',
         onPointerDown: (e) => beginDrag(e, null),
         onClick: () => { if (!dragMoved) store.minimize(false) },
-        title: t('title'),
+        title: title,
       },
-        h('span', null, '📖 ' + t('title')),
+        h('span', {
+          className: 'cv-pill-label',
+          style: room != null ? { maxWidth: room + 'px' } : null,
+        },
+          h('span', { className: 'cv-pill-icon cv-pill-ch' }, '📖'),
+          parts.map((c, i) => h('span', { key: c + i, className: 'cv-pill-ch' }, c))),
         badge > 0 && h('span', { className: 'cv-pill-badge' }, String(badge)),
       ),
     ))

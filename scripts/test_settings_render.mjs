@@ -72,10 +72,13 @@ function render(panelInit, state) {
   const factory = new Function(
     'React', 'h', 't', 'store', 'clamp', 'fmtT', 'SC_GUIDE', 'SC', 'enVoiceCount',
     'speak', 'VOICE_WARMED', 'refreshVoices', 'warmUpVoices', 'setVoices', 'readerApplySettingsChange',
+    'REPO_URL', 'window', 'bookStats',
     fnSrc + '\nreturn SettingsView',
   )
   const Comp = factory(React, h, t, store, clamp, fmtT, SC_GUIDE, SC, enVoiceCount,
-    speak, VOICE_WARMED, refreshVoices, warmUpVoices, setVoices, () => {})
+    speak, VOICE_WARMED, refreshVoices, warmUpVoices, setVoices, () => {},
+    'https://github.com/zhuran305-web/dsh-cet-vocab', { open() {} },
+    () => ({ total: 5407, seen: 42, learning: 40, graduated: 1, cut: 1, boxes: [0, 0, 0, 0, 0, 0] }))
   const tree = Comp({ state })
   return { tree, setterCalls }
 }
@@ -108,14 +111,23 @@ const main = render('', state)
 const nodes = walk(main.tree)
 const entries = nodes.filter((n) => cls(n) === 'cv-set-entry')
 check('主页面渲染不抛异常', !!main.tree)
-check('主页面有 2 个二级菜单入口（学习 / 快捷键）', entries.length === 2, entries.map((e) => text(e).trim().split(' ')[0]).join(' | '))
+check('主页面有 3 个二级菜单入口（学习 / 快捷键 / 数据与重置）', entries.length === 3, entries.map((e) => text(e).trim().split(' ')[0]).join(' | '))
 check('学习入口标题 = 学习', entries.some((e) => text(e).includes('学习')))
 check('学习入口有右侧摘要（词库 · 每日 · 口音）', /四级 · 10 词\/天 · 美式/.test(text(entries[0])), text(entries[0]).trim())
 check('学习入口有 chevron', entries.some((e) => (e.children || []).some((c) => c && c.children && c.children.includes('›'))))
 const rows = nodes.filter((n) => cls(n) === 'cv-set-row')
 check('主页面只留 3 行设置（外观/自动发音/自动弹出）', rows.length === 3, String(rows.length))
 check('主页面不再出现「自定义」行', !text(main.tree).includes('自定义'))
-check('主页面保留重置按钮', nodes.some((n) => cls(n) === 'cv-resetbtn'))
+check('主页面不再直接挂红色重置按钮（已移入二级页）', !nodes.some((n) => cls(n) === 'cv-resetbtn'))
+check('主页面有「数据与重置」入口', entries.some((e) => text(e).includes('数据与重置')))
+check('重置有二次确认：armed 自动复位 + 危险态样式 + 显示将清空数量',
+  /const \[armed, setArmed\] = React\.useState\(false\)/.test(src) &&
+  /window\.setTimeout\(\(\) => setArmed\(false\), 3500\)/.test(src) &&
+  src.includes('cv-resetbtn--armed') &&
+  /armed \? fmtT\(t\('resetConfirm'\), \{ n: bookStats\(state\)\.seen \}\)/.test(src))
+const starBtn = nodes.find((n) => cls(n) === 'cv-starbtn')
+check('主页面有 Star 鼓励按钮且指向仓库', !!starBtn && typeof starBtn.props.onClick === 'function' &&
+  text(starBtn).includes('Star'), starBtn ? text(starBtn) : 'missing')
 check('主页面保留数据来源脚注', cls(nodes.find((n) => cls(n) === 'cv-foot')) === 'cv-foot' && text(main.tree).includes('ECDICT'))
 check('点学习入口把 panel 置为 learn', (() => { entries[0].props.onClick(); return main.setterCalls.at(-1)?.v === 'learn' })())
 
@@ -154,6 +166,15 @@ check('输入框回填当前每日新词数', !!numInput && numInput.props.value
 check('学习页无「自定义」行', !text(learn.tree).includes('自定义'))
 check('发音口音行含试听按钮', !!lrows.find((r) => text(r).includes('发音口音')) && walk(lrows.find((r) => text(r).includes('发音口音'))).some((n) => cls(n) === 'cv-voice-test'))
 check('点返回把 panel 置为空', (() => { lnodes.find((n) => cls(n) === 'cv-set-back').props.onClick(); return learn.setterCalls.at(-1)?.v === '' })())
+
+// ---- data page ------------------------------------------------------------
+const dataPage = render('data', state)
+const dnodes = walk(dataPage.tree)
+check('数据与重置页渲染不抛异常', !!dataPage.tree)
+check('数据页标题 = 数据与重置', text(dnodes.find((n) => cls(n) === 'cv-sub-title')).includes('数据与重置'))
+check('数据页有风险说明', text(dataPage.tree).includes('不可撤销'))
+check('数据页才有红色重置按钮', dnodes.some((n) => cls(n) === 'cv-resetbtn'))
+check('点返回把 panel 置为空（数据页）', (() => { dnodes.find((n) => cls(n) === 'cv-set-back').props.onClick(); return dataPage.setterCalls.at(-1)?.v === '' })())
 
 // ---- keys page ------------------------------------------------------------
 const keys = render('keys', state)

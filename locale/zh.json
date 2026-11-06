@@ -41,7 +41,7 @@
   "voiceSysOk": "系统已装 {n} 个英语语音，作断网时的备用发音；正常情况用在线真人发音。",
   "voiceRetry": "重新检测",
   "settingsReset": "重置全部进度",
-  "resetConfirm": "再点一次确认重置",
+  "resetConfirm": "再点一次清空 {n} 个词的学习进度（3.5 秒内有效）",
   "dataSource": "词库数据：ECDICT（MIT 许可）",
   "bookBadge4": "四级",
   "bookBadge6": "六级",
@@ -119,5 +119,10 @@
   "hintCardCut": "Space 显示释义 · 1/2/3 评分 · 4 斩",
   "maint": "维护抽查",
   "maintHint": "已斩的词到期回来抽查一次；答错会自动打回阶段 1 重学",
-  "cutHoldNext": "已斩，继续"
+  "cutHoldNext": "已斩，继续",
+  "starCta": "给个 Star 鼓励一下",
+  "starHint": "打开项目主页，点右上角 Star 即可（浏览器插件无法代替你授权）",
+  "settingsData": "数据与重置",
+  "resetHint": "重置会清空全部学习进度（记忆阶段、复习计划、已斩记录），此操作不可撤销。词库与设置项会保留。",
+  "learnedCount": "已学 {n} 词"
 }
