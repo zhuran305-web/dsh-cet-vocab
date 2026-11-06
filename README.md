@@ -59,6 +59,12 @@ Requirements: an authenticated `gh`, and an npm **granular access token with “
 
 ## Changelog / 更新记录
 
+### 0.2.6
+
+- **双向边界适应 / Both-axis fitting** — 悬浮按钮与展开卡片现在横向、纵向都按当前视口钳制：大屏拖到边缘后缩小窗口、或拖到屏幕下方，按钮都会自动回到可见区域，不会消失；最小化/展开时同样生效。Floating pieces are clamped on both axes, so shrinking the viewport (or dragging near the bottom) never strands the button off screen.
+- **贴边不留空、开关不消失 / No gap, toggle intact** — 右侧边界已计入朗读开关位与边距，贴边时右边缘正好落在边界内侧；挤压态不再隐藏朗读开关。The right bound now accounts for the toggle slot and edge pad, and the reader toggle stays visible when squeezed.
+- **拖动连续自适应 / Continuous reflow** — 宽度改由 CSS 变量驱动，拖动过程中文字实时逐字压成一列，松手不跳变。Width is driven by a CSS variable, so the label reflows continuously while dragging.
+
 ### 0.2.5
 
 - **边界适应 / Edge-aware window** — 悬浮按钮拖到屏幕右侧后点开，卡片按 `384 × 缩放` 的真实视觉宽度自动内收，不再溢出右边界；不改动已保存的位置，收起后仍在原处；DSH 侧栏或窗口尺寸变化时实时重算。The expanded card now fits itself inside the viewport by its real scaled width, without moving the saved pill position, and re-fits on viewport resize.

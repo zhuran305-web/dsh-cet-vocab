@@ -1635,6 +1635,7 @@ const CSS = `
 .cv-cluster {
   position: fixed; display: flex; align-items: center; gap: var(--cv-sp-2);
   user-select: none; z-index: 3;
+  --cv-pill-x: 0px;
 }
 .cv-cluster--default { right: 24px; top: 88px; }
 .cv-pill {
@@ -1647,9 +1648,12 @@ const CSS = `
   transition: filter var(--cv-ease);
 }
 .cv-pill:active { cursor: grabbing; }
+/* No overflow:hidden here — clipping would silently drop the items that do not
+   fit instead of letting them wrap to the next row, which is exactly what made
+   the counter spill while the text "reverted" to a cramped look. */
 .cv-pill-label {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
-  gap: 0 1px; min-width: 0; overflow: hidden;
+  gap: 0 1px; min-width: 0;
   line-height: 1.2;
 }
 /* One glyph per item: the wrap points are the character boundaries, so the
@@ -1736,6 +1740,9 @@ const CSS = `
   min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px;
   background: color-mix(in srgb, var(--cv-accent-fg, #fff) 30%, transparent);
   font-size: var(--cv-t-xs); font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+  /* Part of the wrapping flow (last item): it drops to its own row instead of
+     spilling past the right edge when space runs out. */
+  margin-left: 5px; flex: none;
 }
 .cv-hint { font-size: var(--cv-t-xs); color: var(--cv-text-secondary, var(--dsw-alias-label-secondary)); text-align: center; margin-top: 10px; }
 .cv-flash {
@@ -1903,9 +1910,53 @@ const PILL_EDGE_PAD = 16 // breathing room kept between the pill's text and the 
  *  the right of the reader toggle inside the cluster, so subtract that too —
  *  otherwise the text reflows while there is still visible room to its right. */
 const READER_SLOT = 42 // toggle width 34 + cluster gap 8
+const PILL_MIN_VISIBLE = 54 // padding + one glyph column: the narrowest usable pill
+const PILL_PAD_X = 30 // .cv-pill horizontal padding (15px each side)
+const PILL_GAP = 7 // .cv-pill gap between label and siblings
+const PILL_CH = 17 // one CJK glyph + gap: the narrowest a label can sanely be
+/** Space the pill's LABEL may occupy at a given container x. The pill sits to
+ *  the right of the reader toggle, and its own padding/gap eat into that space
+ *  — both must be subtracted, or the label keeps room for a couple of glyphs
+ *  and the text wraps as 「背单」/「词」 instead of one character per row. */
 function pillLabelRoom(x, vw) {
   const width = vw || (typeof window !== 'undefined' ? window.innerWidth : 1600) || 1600
-  return Math.max(0, Math.floor(width - (Number(x) || 0) - READER_SLOT - PILL_EDGE_PAD))
+  const outer = width - (Number(x) || 0) - READER_SLOT - PILL_EDGE_PAD
+  const inner = outer - PILL_PAD_X - PILL_GAP
+  // Never below one glyph: a zero-width label would collapse the pill entirely.
+  return Math.max(PILL_CH, Math.floor(inner))
+}
+/** The pill itself must stay on screen too: after the viewport shrinks (or on
+ *  a smaller monitor) an old saved x can sit past the right edge and the
+ *  whole button disappears. Clamp it against the cluster's minimum footprint
+ *  (toggle + a readable slice of the pill), mirroring windowLeftFor. */
+function pillLeftFor(x, vw) {
+  const width = vw || (typeof window !== 'undefined' ? window.innerWidth : 1600) || 1600
+  // The pill sits to the RIGHT of the reader toggle inside the cluster, so the
+  // right edge is x + READER_SLOT + pill width. Reserve all three (plus the
+  // edge pad) — reserving only the pill left a dead gap against the border.
+  const maxLeft = Math.max(8, width - READER_SLOT - PILL_MIN_VISIBLE - PILL_EDGE_PAD)
+  if (x == null) return null
+  return Math.round(clamp(Number(x) || 0, 8, maxLeft))
+}
+/** Vertical twin of pillLeftFor: after the viewport gets shorter (smaller
+ *  monitor, or the window dragging into a lower screen) a saved y can sit past
+ *  the bottom edge and the button silently disappears. Keep its whole height
+ *  on screen. `h` is the piece's own height (null → assume the pill's). */
+function pillTopFor(y, vh, h) {
+  const height = vh || (typeof window !== 'undefined' ? window.innerHeight : 900) || 900
+  const own = h || PILL_MIN_VISIBLE
+  const maxTop = Math.max(6, height - own - PILL_EDGE_PAD)
+  if (y == null) return null
+  return Math.round(clamp(Number(y) || 0, 6, maxTop))
+}
+/** Vertical twin for the expanded card: it is taller than the pill, so the
+ *  bottom bound has to account for the scaled height it actually draws. */
+function windowTopFor(y, vh, z) {
+  const height = vh || (typeof window !== 'undefined' ? window.innerHeight : 900) || 900
+  const scaled = Math.min(660, Math.max(260, height * 0.74)) * (z || 1)
+  const maxTop = Math.max(6, height - scaled - WIN_EDGE)
+  if (y == null) return null
+  return Math.round(clamp(Number(y) || 0, 6, maxTop))
 }
 function clampScale(v) {
   if (v == null || v === '') return 1 // missing in the saved geometry
@@ -1980,10 +2031,17 @@ function beginDrag(e, geom) {
     // (VocabWindow), which pulls the 384*z-wide card back inside the viewport.
     // Expanded window: clamp against its own visual width so it never leaves
     // the screen while being dragged either.
-    const y = clamp(ev.clientY - offY, 6, window.innerHeight - 42)
+    // Vertical bound uses the element's real height: the pill grows tall when
+    // its label stacks into a column, so a fixed 42px reserve let it hang off
+    // the bottom edge.
+    const h = rect.height
+    const y = clamp(ev.clientY - offY, 6, Math.max(6, window.innerHeight - h - PILL_EDGE_PAD))
     let x
     if (isPill) {
-      x = clamp(ev.clientX - offX, 8 - rect.width + 90, window.innerWidth - 90)
+      // Right edge = x + READER_SLOT + pill width, so the bound reserves the
+      // toggle slot as well; reserving only the pill left a gap at the border.
+      x = clamp(ev.clientX - offX, 8,
+        Math.max(8, window.innerWidth - READER_SLOT - PILL_MIN_VISIBLE - PILL_EDGE_PAD))
     } else {
       const z = winScale(store.get().win || {})
       x = clamp(ev.clientX - offX, 8, Math.max(8, window.innerWidth - WIN_W * z - WIN_EDGE))
@@ -1992,19 +2050,10 @@ function beginDrag(e, geom) {
     el.style.left = x + 'px'
     el.style.top = y + 'px'
     el.style.right = 'auto'
-    // Give the label the space that is really left on screen: characters then
-    // reflow into a column exactly when the pill reaches the edge, driven by
-    // layout pressure rather than a hard-coded breakpoint or a cross-fade.
-    if (isPill) {
-      const label = el.querySelector('.cv-pill-label')
-      if (label) {
-        const room = pillLabelRoom(x, window.innerWidth)
-        if (label.dataset.room !== String(room)) {
-          label.dataset.room = String(room)
-          label.style.maxWidth = room + 'px'
-        }
-      }
-    }
+    // Hand the geometry to CSS so the browser re-wraps continuously during the
+    // drag: --cv-pill-x feeds the pill's own max-width calc(), so the column
+    // collapses/expands with the pointer instead of snapping on pointer-up.
+    if (isPill) el.style.setProperty('--cv-pill-x', x + 'px')
     readerFollowDrag(x, y) // the store commits on pointer-up only; follow live
   }
   const up = () => {
@@ -2021,18 +2070,29 @@ function beginDrag(e, geom) {
   e.preventDefault()
 }
 
-/** Track viewport width so side-panel toggles / browser resizes re-fit the
- *  expanded window without a persisted geometry change. One passive listener,
- *  removed on unmount; setState only when the value actually changes. */
-function useViewportWidth() {
-  const [vw, setVw] = React.useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1600))
+/** Track BOTH viewport axes: shrinking the window (or opening a side panel)
+ *  moves floating pieces off screen in either direction, so height matters as
+ *  much as width. One passive listener, removed on unmount, and state is only
+ *  replaced when a number actually changes. */
+function useViewportSize() {
+  const read = () => (typeof window !== 'undefined'
+    ? { vw: window.innerWidth, vh: window.innerHeight }
+    : { vw: 1600, vh: 900 })
+  const [size, setSize] = React.useState(read)
   React.useEffect(() => {
     if (typeof window === 'undefined' || !window.addEventListener) return undefined
-    const onResize = () => setVw((prev) => (prev === window.innerWidth ? prev : window.innerWidth))
+    const onResize = () => setSize((prev) => {
+      const next = read()
+      return (prev.vw === next.vw && prev.vh === next.vh) ? prev : next
+    })
     window.addEventListener('resize', onResize, { passive: true })
     return () => window.removeEventListener('resize', onResize)
   }, [])
-  return vw
+  return size
+}
+/** Back-compat shim: components that only care about width. */
+function useViewportWidth() {
+  return useViewportSize().vw
 }
 
 function Badge({ book }) {
@@ -2654,10 +2714,11 @@ function VocabWindow() {
   const badge = due.reviews.length + due.fresh.length
   const geom = state.win || {}
   const z = winScale(geom)
-  const vw = useViewportWidth()
+  const { vw, vh } = useViewportSize()
   const left = geom.x != null ? windowLeftFor(geom.x, z, vw) : null
+  const top = geom.y != null ? windowTopFor(geom.y, vh, z) : null
   const style = {
-    ...(geom.x != null && geom.y != null ? { left: left + 'px', top: geom.y + 'px' } : null),
+    ...(left != null && top != null ? { left: left + 'px', top: top + 'px' } : null),
     transform: 'scale(' + z + ')',
     transformOrigin: 'top left',
     // In layout units the card may be taller than the screen once scaled, so
@@ -2706,33 +2767,45 @@ function VocabPill() {
   const due = React.useMemo(() => buildQueue(state, now), [state]) // eslint-disable-line
   const badge = due.reviews.length + due.fresh.length
   const geom = state.win || {}
-  const vw = useViewportWidth()
-  const style = geom.x != null && geom.y != null ? { left: geom.x + 'px', top: geom.y + 'px' } : null
+  const { vw, vh } = useViewportSize()
   const title = String(t('title') || '')
   // CJK breaks per glyph; latin words stay whole (an English "Vocabulary"
   // split into 10 rows would be nonsense) and simply shrink/wrap as a unit.
   const isCJK = /^[\u4e00-\u9fff]+$/.test(title)
   const parts = isCJK ? Array.from(title) : [title]
-  const room = geom.x != null ? pillLabelRoom(geom.x, vw) : null
+  // Clamp BOTH axes: after the window shrinks an old x/y can leave the button
+  // outside the viewport in either direction (dragging it near the bottom was
+  // the case that used to drop it off screen entirely).
+  const left = pillLeftFor(geom.x, vw)
+  // Worst-case height: the stacked column (icon + one row per glyph + counter).
+  const pillH = 20 * (1 + parts.length + (badge > 0 ? 1 : 0)) + 20
+  const top = pillTopFor(geom.y, vh, pillH)
+  const clusterStyle = left != null && top != null ? { left: left + 'px', top: top + 'px' } : null
+  // Widths are CSS, not numbers: --cv-pill-x is the only thing the drag writes,
+  // so the browser re-wraps continuously instead of waiting for a re-render.
+  const pillStyle = left != null
+    ? { maxWidth: 'calc(100vw - var(--cv-pill-x, 0px) - ' + (READER_SLOT + PILL_EDGE_PAD) + 'px)' }
+    : null
   return h('div', { className: 'cv-root' },
     h('div', {
       className: 'cv-cluster' + (geom.x == null ? ' cv-cluster--default' : ''),
-      style,
+      style: clusterStyle != null ? { ...clusterStyle, '--cv-pill-x': left + 'px' } : null,
     },
       h(ReaderToggle, { inCluster: true }),
       h('div', {
         className: 'cv-pill',
+        style: pillStyle,
         onPointerDown: (e) => beginDrag(e, null),
         onClick: () => { if (!dragMoved) store.minimize(false) },
         title: title,
       },
-        h('span', {
-          className: 'cv-pill-label',
-          style: room != null ? { maxWidth: room + 'px' } : null,
-        },
+        // The badge rides INSIDE the same wrapping flow, last in order, so when
+        // space runs out the rows stack as 📖 / 背 / 单 / 词 / count instead of
+        // the counter spilling past the edge while the text reflows separately.
+        h('span', { className: 'cv-pill-label' },
           h('span', { className: 'cv-pill-icon cv-pill-ch' }, '📖'),
-          parts.map((c, i) => h('span', { key: c + i, className: 'cv-pill-ch' }, c))),
-        badge > 0 && h('span', { className: 'cv-pill-badge' }, String(badge)),
+          parts.map((c, i) => h('span', { key: c + i, className: 'cv-pill-ch' }, c)),
+          badge > 0 && h('span', { className: 'cv-pill-badge cv-pill-ch' }, String(badge))),
       ),
     ))
 }
@@ -2775,11 +2848,16 @@ function ReaderToggle({ inCluster }) {
   const geom = (state && state.win) || {}
   const expanded = readerExpanded(state)
   const dragged = geom.x != null && geom.y != null
+  const { vw, vh } = useViewportSize()
   let style = null
   if (!inCluster && !expanded) {
-    style = dragged ? { left: geom.x + 'px', top: geom.y + 'px' } : null // CSS default = the pill's spot
+    // Closed state: mirror the pill's clamped position so the toggle cannot be
+    // stranded off screen when the viewport shrinks either.
+    style = dragged
+      ? { left: pillLeftFor(geom.x, vw) + 'px', top: pillTopFor(geom.y, vh) + 'px' }
+      : null
   } else if (!inCluster && expanded && dragged) {
-    style = readerAboveStyle(geom)
+    style = readerAboveStyle({ x: windowLeftFor(geom.x, winScale(geom), vw), y: windowTopFor(geom.y, vh, winScale(geom)) })
   }
   const cls = 'cv-reader' +
     (inCluster ? ' cv-reader--incluster' : expanded && !dragged ? ' cv-reader--above' : '') +
